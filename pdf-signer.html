@@ -4,18 +4,41 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PDF 서명 &amp; 편집기</title>
+<script>
+  /* 테마 즉시 적용(깜빡임 방지): 저장값 없으면 OS 설정을 따름 */
+  (function(){
+    try{
+      var t = localStorage.getItem("theme");
+      if (t !== "light" && t !== "dark")
+        t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      document.documentElement.setAttribute("data-theme", t);
+    }catch(e){}
+  })();
+</script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   :root{
     --bg:#eef2f7;--panel:#fff;--ink:#1e293b;--muted:#64748b;
     --accent:#4f46e5;--accent-d:#4338ca;--border:#e2e8f0;--danger:#ef4444;
+    --header:#1e293b;--sidebar:#0f172a;--viewer:#e8edf3;
+    --panel-2:#f1f5f9;--panel-hover:#f5f6ff;--field:#fff;
+    --toast:#1e293b;--overlay:rgba(255,255,255,.7);--spin-track:#d8def0;--dz-border:#b9c4d4;
   }
+  [data-theme="dark"]{
+    --bg:#0b1120;--panel:#1e293b;--ink:#e8eef7;--muted:#94a3b8;
+    --accent:#6366f1;--accent-d:#818cf8;--border:#334155;--danger:#f0556b;
+    --header:#020617;--sidebar:#020617;--viewer:#0b1120;
+    --panel-2:#334155;--panel-hover:#243049;--field:#0f172a;
+    --toast:#334155;--overlay:rgba(2,6,23,.66);--spin-track:#334155;--dz-border:#3b4a63;
+  }
+  html{color-scheme:light}
+  html[data-theme="dark"]{color-scheme:dark}
   html,body{height:100%}
   body{font-family:"Malgun Gothic","맑은 고딕",-apple-system,system-ui,"Segoe UI",sans-serif;
     background:var(--bg);color:var(--ink);display:flex;flex-direction:column;height:100vh;overflow:hidden}
 
   /* ---- 상단 툴바 ---- */
-  header{background:#1e293b;color:#fff;display:flex;align-items:center;gap:12px;
+  header{background:var(--header);color:#fff;display:flex;align-items:center;gap:12px;
     padding:10px 16px;flex:0 0 auto;box-shadow:0 2px 8px rgba(0,0,0,.15);z-index:20}
   .brand{font-weight:700;font-size:16px;display:flex;align-items:center;gap:8px;white-space:nowrap}
   .tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -26,10 +49,11 @@
   header button:hover{background:rgba(255,255,255,.18)}
   header button.primary{background:var(--accent);border-color:var(--accent)}
   header button.primary:hover{background:var(--accent-d)}
+  .theme-toggle{margin-left:auto;font-size:16px;line-height:1;padding:6px 11px}
 
   /* ---- 본문 (사이드바 + 콘텐츠) ---- */
   main{flex:1;display:flex;min-height:0;overflow:hidden}
-  #sidebar{flex:0 0 220px;background:#0f172a;color:#cbd5e1;display:flex;flex-direction:column;
+  #sidebar{flex:0 0 220px;background:var(--sidebar);color:#cbd5e1;display:flex;flex-direction:column;
     overflow:hidden;border-right:1px solid rgba(255,255,255,.06)}
   .sb-title{font-size:12px;color:#94a3b8;padding:14px 14px 8px;letter-spacing:.03em}
   .sb-list{flex:1;overflow:auto;padding:2px 8px}
@@ -48,9 +72,9 @@
   #content{position:relative;flex:1;min-width:0;overflow:hidden}
 
   .dropzone{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px}
-  .dz-inner{width:min(560px,92%);border:2.5px dashed #b9c4d4;border-radius:18px;background:var(--panel);
+  .dz-inner{width:min(560px,92%);border:2.5px dashed var(--dz-border);border-radius:18px;background:var(--panel);
     padding:54px 28px;text-align:center;cursor:pointer;transition:.15s}
-  .dz-inner:hover,.dropzone.drag .dz-inner{border-color:var(--accent);background:#f5f6ff;transform:translateY(-2px)}
+  .dz-inner:hover,.dropzone.drag .dz-inner{border-color:var(--accent);background:var(--panel-hover);transform:translateY(-2px)}
   .dz-icon{font-size:54px;margin-bottom:10px}
   .dz-inner h2{font-size:20px;margin-bottom:8px}
   .dz-inner p{color:var(--muted);font-size:14px}
@@ -86,12 +110,12 @@
   /* ---- 서명 모달 ---- */
   .modal{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;
     justify-content:center;z-index:50;padding:20px}
-  .modal-card{background:#fff;border-radius:16px;padding:22px;width:min(640px,96%);
+  .modal-card{background:var(--panel);border-radius:16px;padding:22px;width:min(640px,96%);
     box-shadow:0 20px 60px rgba(0,0,0,.3)}
   .modal-card h3{font-size:18px;margin-bottom:4px}
   .modal-card .sub{color:var(--muted);font-size:13px;margin-bottom:14px}
   .lastsig{display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:10px 12px;
-    background:#f1f5f9;border-radius:10px;font-size:13px;color:var(--muted)}
+    background:var(--panel-2);border-radius:10px;font-size:13px;color:var(--muted)}
   .lastsig img{max-height:46px;max-width:200px;background:#fff;border:1px solid var(--border);
     border-radius:6px;padding:3px}
   .lastsig .btn{margin-left:auto;padding:7px 12px}
@@ -102,22 +126,22 @@
   .modal-actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}
   .modal-actions .spacer{flex:1}
   .pw-input{width:100%;font:inherit;font-size:15px;padding:11px 13px;border:1px solid var(--border);
-    border-radius:9px;outline:none;margin-top:4px}
+    border-radius:9px;outline:none;margin-top:4px;background:var(--field);color:var(--ink)}
   .pw-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,70,229,.15)}
   .btn{font:inherit;font-size:14px;padding:9px 16px;border-radius:9px;cursor:pointer;border:1px solid var(--border);
-    background:#fff;color:var(--ink)}
-  .btn:hover{background:#f1f5f9}
+    background:var(--field);color:var(--ink)}
+  .btn:hover{background:var(--panel-2)}
   .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .btn.primary:hover{background:var(--accent-d)}
 
   /* ---- 토스트 / 로딩 ---- */
-  .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#1e293b;color:#fff;
+  .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:var(--toast);color:#fff;
     padding:11px 18px;border-radius:10px;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.25);z-index:60;
     opacity:0;transition:.2s;pointer-events:none}
   .toast.show{opacity:1}
-  .loading{position:fixed;inset:0;background:rgba(255,255,255,.7);display:flex;align-items:center;
+  .loading{position:fixed;inset:0;background:var(--overlay);display:flex;align-items:center;
     justify-content:center;flex-direction:column;gap:14px;z-index:70;backdrop-filter:blur(2px)}
-  .spinner{width:46px;height:46px;border:4px solid #d8def0;border-top-color:var(--accent);
+  .spinner{width:46px;height:46px;border:4px solid var(--spin-track);border-top-color:var(--accent);
     border-radius:50%;animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   .loading p{font-size:14px;color:var(--muted)}
@@ -127,7 +151,7 @@
   /* ===== 오피스 뷰어 ===== */
   .tools .ofname{font-weight:600;font-size:14px;color:#fff;max-width:50vw;overflow:hidden;
     text-overflow:ellipsis;white-space:nowrap}
-  .office{position:absolute;inset:0;overflow:auto;background:#e8edf3;padding:24px 12px 60px}
+  .office{position:absolute;inset:0;overflow:auto;background:var(--viewer);padding:24px 12px 60px}
   .docx-host{margin:0 auto}
   .pptx-host{margin:0 auto;max-width:1080px}
   .xlsx-tabs{display:flex;gap:6px;flex-wrap:wrap;max-width:1080px;margin:0 auto 12px}
@@ -197,6 +221,7 @@
     <span class="spacer"></span>
     <button id="btnPrint">🖨 인쇄 / PDF로 저장</button>
   </div>
+  <button id="themeToggle" class="theme-toggle" type="button" title="다크 모드로 전환" aria-label="테마 전환">🌙</button>
 </header>
 
 <main>
@@ -210,10 +235,10 @@
       <div class="dz-inner" id="dzInner">
         <div class="dz-icon">📥</div>
         <h2>파일을 여기로 끌어다 놓으세요</h2>
-        <p>PDF · Word · Excel · PowerPoint · 이미지 &nbsp;|&nbsp; 또는 클릭해서 선택</p>
+        <p>PDF · Word · Excel · PowerPoint · 이미지 · ZIP &nbsp;|&nbsp; 또는 클릭해서 선택</p>
         <div class="dz-note">🔒 모든 처리는 이 브라우저 안에서만 이뤄집니다. 파일은 외부로 전송되지 않아요.<br>
           ✍️ 서명·편집은 PDF에서, 나머지는 미리보기로 · <b>여러 개를 한꺼번에 열 수 있어요</b></div>
-        <input type="file" id="fileInput" accept=".pdf,.docx,.xlsx,.xls,.csv,.pptx,.md,.markdown,.txt,image/*" multiple hidden>
+        <input type="file" id="fileInput" accept=".pdf,.docx,.xlsx,.xls,.csv,.pptx,.md,.markdown,.txt,.zip,image/*" multiple hidden>
       </div>
     </div>
   </div>
@@ -293,6 +318,8 @@ window.FileReaderJS = window.FileReaderJS || {
 <!-- PDF 서명/편집 라이브러리 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<!-- 압축(zip) 풀기 + 암호 ZIP(AES) 지원 -->
+<script src="https://cdn.jsdelivr.net/npm/@zip.js/zip.js/dist/zip-full.min.js"></script>
 <script>
 "use strict";
 
@@ -349,6 +376,11 @@ function hideLoading(){ byId("loading").hidden = true; }
 
 /* ===== 문서 관리(사이드바/탭) ===== */
 const IMG_EXTS = ["png","jpg","jpeg","gif","webp","bmp","svg","avif","ico"];
+// ZIP 안에서 자동으로 열어줄 확장자(중첩 zip 포함)
+const ZIP_OPENABLE = ["pdf","docx","xlsx","xls","csv","pptx","md","markdown","txt","zip", ...IMG_EXTS];
+// zip에서 꺼낸 파일은 MIME이 비어 있어 일부 형식(특히 SVG)이 미리보기에서 거부됨 → 확장자로 보강
+const ZIP_MIME = { svg:"image/svg+xml", png:"image/png", jpg:"image/jpeg", jpeg:"image/jpeg",
+  gif:"image/gif", webp:"image/webp", bmp:"image/bmp", avif:"image/avif", ico:"image/x-icon", pdf:"application/pdf" };
 
 function makeDoc(kind, name){
   const id = ++docSeq;
@@ -432,11 +464,101 @@ async function handleFiles(files){
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     try {
       if (ext === "pdf") await loadPdf(await file.arrayBuffer(), file.name);
+      else if (ext === "zip") await loadZip(file);
       else if (["docx","xlsx","xls","csv","pptx","md","markdown","txt"].includes(ext)) await loadOffice(file, ext);
       else if (IMG_EXTS.includes(ext)) await loadImage(file);
       else toast("지원하지 않는 형식: " + file.name, 2500);
     } catch (e){ console.error(e); }
   }
+}
+
+/* ===== 압축(zip) 풀어서 내부 파일을 각각 열기 (zip.js — 무암호 + AES 암호 지원) ===== */
+async function loadZip(file){
+  if (typeof zip === "undefined"){ toast("압축 라이브러리를 불러오지 못했습니다."); return; }
+  zip.configure({ useWebWorkers: false });                 // file:// 에서도 동작하도록 워커 미사용
+  showLoading("압축 여는 중…");
+
+  // 1) 엔트리 훑어서 — 열 수 있는 게 있는지 + 암호가 걸렸는지 파악
+  let openable = 0, skipped = 0, encrypted = false;
+  try {
+    const r = new zip.ZipReader(new zip.BlobReader(file));
+    for (const e of await r.getEntries()){
+      if (e.directory) continue;
+      const path = e.filename || "";
+      if (path.indexOf("__MACOSX/") === 0) continue;        // 맥 메타데이터
+      const base = path.split("/").pop();                   // 경로 제거 → 파일명만
+      if (!base || base.charAt(0) === ".") continue;        // 숨김(.DS_Store 등)
+      const ext = (base.split(".").pop() || "").toLowerCase();
+      if (!ZIP_OPENABLE.includes(ext)){ skipped++; continue; }
+      openable++;
+      if (e.encrypted) encrypted = true;
+    }
+    await r.close();
+  } catch(e){
+    console.error(e); hideLoading();
+    toast("압축을 열지 못했습니다. 올바른 zip 파일인지 확인해 주세요.", 3500);
+    return;
+  }
+  if (!openable){
+    hideLoading();
+    toast(skipped ? "압축 안에 열 수 있는 형식이 없어요." : "압축이 비어 있어요.", 3000);
+    return;
+  }
+
+  // 2) 암호가 걸렸으면 암호 확정 (오피스 암호와 동일하게 최대 5회 재시도)
+  let password = null;
+  if (encrypted){
+    hideLoading();
+    for (let attempt = 0; ; attempt++){
+      const pw = await askPassword(attempt === 0
+        ? "🔒 암호로 보호된 압축입니다. 암호를 입력하세요."
+        : "암호가 올바르지 않습니다. 다시 입력해 주세요.");
+      if (pw === null) return;                              // 취소
+      showLoading("암호 확인 중…");
+      const ok = await zipPasswordOk(file, pw);
+      hideLoading();
+      if (ok){ password = pw; break; }
+      if (attempt >= 4){ toast("암호를 확인하지 못했어요.", 3000); return; }
+    }
+  }
+
+  // 3) 실제 추출 → 기존 파일 처리 파이프라인 재사용
+  showLoading("압축 푸는 중…");
+  const inner = []; let failed = 0;
+  try {
+    const r = new zip.ZipReader(new zip.BlobReader(file), password ? { password } : undefined);
+    for (const e of await r.getEntries()){
+      if (e.directory) continue;
+      const path = e.filename || "";
+      if (path.indexOf("__MACOSX/") === 0) continue;
+      const base = path.split("/").pop();
+      if (!base || base.charAt(0) === ".") continue;
+      const ext = (base.split(".").pop() || "").toLowerCase();
+      if (!ZIP_OPENABLE.includes(ext)) continue;
+      try { const m = ZIP_MIME[ext]; inner.push(new File([await e.getData(new zip.BlobWriter())], base, m ? { type: m } : undefined)); }
+      catch(err){ failed++; }                               // 개별 추출 실패
+    }
+    await r.close();
+  } catch(e){ console.error(e); }
+  hideLoading();
+
+  if (!inner.length){ toast("압축을 풀지 못했어요.", 3000); return; }
+  await handleFiles(inner);
+  const extra = [];
+  if (skipped) extra.push(skipped + "개 미지원");
+  if (failed)  extra.push(failed + "개 실패");
+  toast("📦 " + inner.length + "개 열기" + (extra.length ? " · " + extra.join(" · ") : ""), 3000);
+}
+
+/* 암호 검증: 첫 암호화 엔트리를 주어진 암호로 풀어본다(성공=true) */
+async function zipPasswordOk(file, pw){
+  try {
+    const r = new zip.ZipReader(new zip.BlobReader(file), { password: pw });
+    const te = (await r.getEntries()).find(e => e.encrypted && !e.directory);
+    if (te) await te.getData(new zip.BlobWriter());         // 암호가 틀리면 여기서 throw
+    await r.close();
+    return true;
+  } catch(e){ return false; }
 }
 
 function queueFiles(files){
@@ -1233,7 +1355,7 @@ function renderImage(file, host){
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const wrap = document.createElement("div"); wrap.className = "img-host";
-    const img = document.createElement("img"); img.className = "img-view"; img.alt = file.name;
+    const img = document.createElement("img"); img.className = "img-view"; img.alt = file.name; img.draggable = false;
     wrap.appendChild(img); host.appendChild(wrap);
 
     const bar = document.createElement("div"); bar.className = "img-zoom";
@@ -1267,6 +1389,11 @@ function renderImage(file, host){
 
 /* ===== 이벤트 연결 ===== */
 function wire(){
+  // 내부 드래그(이미지 등 페이지 요소를 끄는 동작)를 외부 파일 드롭과 구분 — 자기 창에 떨궈도 새 파일로 추가하지 않도록
+  let internalDrag = false;
+  window.addEventListener("dragstart", () => { internalDrag = true; }, true);
+  window.addEventListener("dragend",   () => { internalDrag = false; }, true);
+
   // 드롭존
   const fileInput = byId("fileInput");
   byId("dzInner").addEventListener("click", () => fileInput.click());
@@ -1276,13 +1403,14 @@ function wire(){
   }));
   ["dragleave","drop"].forEach(ev => dropzone.addEventListener(ev, (e) => {
     e.preventDefault(); e.stopPropagation(); dropzone.classList.remove("drag");
-    if (ev === "drop" && e.dataTransfer.files.length) queueFiles(e.dataTransfer.files);
+    if (ev === "drop" && !internalDrag && e.dataTransfer.files.length) queueFiles(e.dataTransfer.files);
   }));
 
   // 창 전체로 파일이 떨어져 브라우저가 이동하는 것 방지 + 파일 처리는 여기 한 곳에서만
   window.addEventListener("dragover", (e) => e.preventDefault());
   window.addEventListener("drop", (e) => {
     e.preventDefault();
+    if (internalDrag) return;                                            // 페이지 안에서 시작된 드래그(이미지 등)는 무시
     if (e.dataTransfer.files.length) queueFiles(e.dataTransfer.files);   // 드롭존/콘텐츠 어디에 떨궈도 새 탭으로 추가
   });
 
@@ -1298,6 +1426,24 @@ function wire(){
   byId("btnDownload").onclick = exportPdf;
   byId("btnPrint").onclick = () => window.print();
   byId("sbAdd").onclick = () => byId("fileInput").click();
+
+  // 테마(다크모드) 토글
+  (function(){
+    const btn = byId("themeToggle");
+    const root = document.documentElement;
+    const sync = () => {
+      const dark = root.getAttribute("data-theme") === "dark";
+      btn.textContent = dark ? "☀️" : "🌙";
+      btn.title = dark ? "라이트 모드로 전환" : "다크 모드로 전환";
+    };
+    btn.onclick = () => {
+      const next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("theme", next); } catch(e){}
+      sync();
+    };
+    sync();
+  })();
 
   // 서명 모달
   byId("sigClear").onclick = clearPad;

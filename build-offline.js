@@ -27,6 +27,7 @@ const scripts = [
   ["vendor/office-decrypt.js", "office-decrypt.js"],
   ["https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js", "pdf.min.js"],   // + worker
   ["https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js", "pdf-lib.min.js"],
+  ["https://cdn.jsdelivr.net/npm/@zip.js/zip.js/dist/zip-full.min.js", "zip-full.min.js"],
 ];
 
 for (const [url, file] of scripts) {
