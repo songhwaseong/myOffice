@@ -196,8 +196,17 @@
     height:30px;border-radius:7px;cursor:pointer}
   .img-zoom button:hover{background:rgba(255,255,255,.3)}
   .img-zoom span{min-width:52px;text-align:center}
+  .capture-layer{position:absolute;inset:0;z-index:35;cursor:crosshair;background:rgba(15,23,42,.08)}
+  .capture-box{position:absolute;border:2px solid var(--accent);background:rgba(79,70,229,.12);
+    box-shadow:0 0 0 9999px rgba(15,23,42,.28);border-radius:3px}
+  .capture-bar{position:absolute;display:flex;gap:6px;align-items:center;background:#111827;color:#fff;
+    padding:7px;border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.28);cursor:default}
+  .capture-bar button{font:inherit;font-size:12px;border:0;border-radius:7px;background:rgba(255,255,255,.14);
+    color:#fff;padding:7px 10px;cursor:pointer;white-space:nowrap}
+  .capture-bar button:hover{background:rgba(255,255,255,.28)}
+  .capture-bar button.primary{background:var(--accent)}
   @media print{
-    header,.hint,.toast,#dropzone,#tools,#officeTools,#loading,.img-zoom,#sidebar{display:none!important}
+    header,.hint,.toast,#dropzone,#tools,#officeTools,#loading,.img-zoom,#sidebar,.capture-layer{display:none!important}
     main{position:static;overflow:visible}
     .office,.viewer{position:static;overflow:visible;padding:0;background:#fff}
     .page,.docx-host,.pptx-host,.xlsx-sheet,.md-host,.txt-host{box-shadow:none!important}
@@ -377,11 +386,13 @@
     <button id="btnText">🔤 텍스트</button>
     <button id="btnDate">📅 날짜</button>
     <button id="btnCheck">✓ 체크</button>
+    <button id="btnCapturePdf">▣ 영역 캡처</button>
     <span class="spacer"></span>
     <button id="btnDownload" class="primary">⬇️ 다운로드</button>
   </div>
   <div class="tools" id="officeTools" hidden>
     <span class="ofname" id="officeName"></span>
+    <button id="btnCaptureOffice">▣ 영역 캡처</button>
     <span class="spacer"></span>
     <button id="btnPrint">🖨 인쇄 / PDF로 저장</button>
   </div>
@@ -861,6 +872,7 @@ function closeDoc(id, options={}){
   const i = docs.findIndex(d => d.id === id);
   if (i < 0) return;
   const d = docs[i];
+  if (captureState && captureState.docId === id) closeCaptureLayer();
   if (!options.skipConfirm && d.kind === "pdf" && d.elements && d.elements.length){
     if (!confirm(`'${d.name}' 에 추가한 서명/텍스트가 사라집니다. 닫을까요?`)) return;
   }
@@ -1475,6 +1487,301 @@ async function exportPdf(){
   }
 }
 
+/* ===== 영역 캡처(PNG) ===== */
+let captureState = null;
+
+function closeCaptureLayer(){
+  if (!captureState) return;
+  if (captureState.onKey) window.removeEventListener("keydown", captureState.onKey);
+  if (captureState.layer) captureState.layer.remove();
+  captureState = null;
+}
+
+function clamp(value, min, max){ return Math.max(min, Math.min(max, value)); }
+
+function startCaptureMode(){
+  if (!state || !state.el){ toast("먼저 캡처할 파일을 선택하세요.", 2200); return; }
+  closeCaptureLayer();
+  const content = byId("content");
+  const layer = document.createElement("div");
+  layer.className = "capture-layer";
+  const box = document.createElement("div");
+  box.className = "capture-box";
+  box.hidden = true;
+  layer.appendChild(box);
+  content.appendChild(layer);
+
+  const contentRect = () => content.getBoundingClientRect();
+  const docRect = () => state.el.getBoundingClientRect();
+  const point = (e) => {
+    const cr = contentRect(), dr = docRect();
+    const x = clamp(e.clientX, dr.left, dr.right) - cr.left;
+    const y = clamp(e.clientY, dr.top, dr.bottom) - cr.top;
+    return { x, y, clientX: clamp(e.clientX, dr.left, dr.right), clientY: clamp(e.clientY, dr.top, dr.bottom) };
+  };
+  const drawBox = (a, b) => {
+    const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+    const w = Math.abs(a.x - b.x), h = Math.abs(a.y - b.y);
+    Object.assign(box.style, { left:x+"px", top:y+"px", width:w+"px", height:h+"px" });
+    box.hidden = false;
+    return { left:x, top:y, width:w, height:h };
+  };
+
+  let start = null, selected = null, dragging = false;
+  const onKey = (e) => { if (e.key === "Escape") closeCaptureLayer(); };
+  captureState = { layer, box, docId: state.id, onKey };
+  window.addEventListener("keydown", onKey);
+
+  layer.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".capture-bar")) return;
+    e.preventDefault();
+    const dr = docRect();
+    if (e.clientX < dr.left || e.clientX > dr.right || e.clientY < dr.top || e.clientY > dr.bottom) return;
+    const old = layer.querySelector(".capture-bar");
+    if (old) old.remove();
+    start = point(e);
+    selected = null;
+    dragging = true;
+    layer.setPointerCapture(e.pointerId);
+    drawBox(start, start);
+  });
+  layer.addEventListener("pointermove", (e) => {
+    if (!dragging || !start) return;
+    selected = drawBox(start, point(e));
+  });
+  layer.addEventListener("pointerup", (e) => {
+    if (!dragging || !start) return;
+    dragging = false;
+    selected = drawBox(start, point(e));
+    if (selected.width < 8 || selected.height < 8){ closeCaptureLayer(); toast("조금 더 크게 선택해주세요.", 1800); return; }
+    showCaptureActions(layer, selected);
+  });
+  toast("캡처할 영역을 드래그하세요. Esc로 취소할 수 있어요.", 2400);
+}
+
+function showCaptureActions(layer, rect){
+  const old = layer.querySelector(".capture-bar");
+  if (old) old.remove();
+  const bar = document.createElement("div");
+  bar.className = "capture-bar";
+  const save = document.createElement("button");
+  save.className = "primary";
+  save.textContent = "PNG 저장";
+  const copy = document.createElement("button");
+  copy.textContent = "복사";
+  const again = document.createElement("button");
+  again.textContent = "다시";
+  const cancel = document.createElement("button");
+  cancel.textContent = "닫기";
+  bar.append(save, copy, again, cancel);
+  bar.addEventListener("pointerdown", e => e.stopPropagation());
+  const x = Math.min(rect.left, layer.clientWidth - 250);
+  const y = rect.top + rect.height + 8 < layer.clientHeight - 42 ? rect.top + rect.height + 8 : Math.max(8, rect.top - 46);
+  Object.assign(bar.style, { left:Math.max(8, x)+"px", top:y+"px" });
+  layer.appendChild(bar);
+  save.onclick = () => captureSelection(rect, "download");
+  copy.onclick = () => captureSelection(rect, "copy");
+  again.onclick = () => { bar.remove(); const box = layer.querySelector(".capture-box"); if (box) box.hidden = true; };
+  cancel.onclick = closeCaptureLayer;
+}
+
+function collectInlineStyles(){
+  return [...document.querySelectorAll("style")].map(s => s.textContent || "").join("\n");
+}
+
+function canvasToBlob(canvas, type="image/png", quality){
+  return new Promise(resolve => canvas.toBlob(resolve, type, quality));
+}
+
+async function requireCanvasBlob(canvas, type="image/png", quality){
+  const blob = await canvasToBlob(canvas, type, quality);
+  if (!blob) throw new Error("canvas-blob-failed");
+  return blob;
+}
+
+function imageToPngDataUrl(img){
+  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+  if (!w || !h) return null;
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  c.getContext("2d").drawImage(img, 0, 0);
+  return c.toDataURL("image/png");
+}
+
+async function prepareCaptureClone(source, clone){
+  const srcCanvases = [...source.querySelectorAll("canvas")];
+  const cloneCanvases = [...clone.querySelectorAll("canvas")];
+  cloneCanvases.forEach((c, i) => {
+    const src = srcCanvases[i];
+    if (!src) return;
+    const img = document.createElement("img");
+    img.src = src.toDataURL("image/png");
+    img.className = c.className;
+    img.style.cssText = c.style.cssText;
+    img.style.width = c.style.width || src.style.width || src.width + "px";
+    img.style.height = c.style.height || src.style.height || src.height + "px";
+    c.replaceWith(img);
+  });
+
+  const srcImgs = [...source.querySelectorAll("img")];
+  const cloneImgs = [...clone.querySelectorAll("img")];
+  cloneImgs.forEach((img, i) => {
+    const src = srcImgs[i];
+    if (!src || !src.complete) return;
+    try {
+      const dataUrl = imageToPngDataUrl(src);
+      if (dataUrl) img.src = dataUrl;
+    } catch(e){}
+  });
+}
+
+async function renderDocViewportToCanvas(docEl, scale=2){
+  const w = Math.max(1, docEl.clientWidth), h = Math.max(1, docEl.clientHeight);
+  const clone = docEl.cloneNode(true);
+  await prepareCaptureClone(docEl, clone);
+  const bg = getComputedStyle(docEl).backgroundColor || "#fff";
+  Object.assign(clone.style, {
+    position:"relative", inset:"auto", margin:"0",
+    width:docEl.scrollWidth + "px", height:docEl.scrollHeight + "px",
+    overflow:"visible", transform:`translate(${-docEl.scrollLeft}px, ${-docEl.scrollTop}px)`,
+    transformOrigin:"top left"
+  });
+  const wrapper = document.createElement("div");
+  wrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+  Object.assign(wrapper.style, { width:w+"px", height:h+"px", overflow:"hidden", background:bg });
+  wrapper.appendChild(clone);
+  const safeCss = collectInlineStyles().replace(/\]\]>/g, "]]\\>");
+  const html = `<style><![CDATA[${safeCss}]]></style>` + new XMLSerializer().serializeToString(wrapper);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject width="100%" height="100%">${html}</foreignObject></svg>`;
+  const url = URL.createObjectURL(new Blob([svg], { type:"image/svg+xml;charset=utf-8" }));
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = reject;
+      image.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function cssColor(value, fallback){
+  return value && value !== "rgba(0, 0, 0, 0)" && value !== "transparent" ? value : fallback;
+}
+
+function cssFont(cs){
+  return cs.font || `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+}
+
+function renderXlsxViewportToCanvas(docEl, scale=2){
+  const sheet = docEl.querySelector(".xlsx-sheet");
+  const table = sheet && sheet.querySelector("table");
+  if (!sheet || !table) return null;
+
+  const docRect = docEl.getBoundingClientRect();
+  const sheetRect = sheet.getBoundingClientRect();
+  const w = Math.max(1, docEl.clientWidth), h = Math.max(1, docEl.clientHeight);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(w * scale);
+  canvas.height = Math.round(h * scale);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(scale, scale);
+  ctx.fillStyle = cssColor(getComputedStyle(docEl).backgroundColor, "#f8fafc");
+  ctx.fillRect(0, 0, w, h);
+
+  const sx = sheetRect.left - docRect.left;
+  const sy = sheetRect.top - docRect.top;
+  const sw = sheetRect.width;
+  const sh = sheetRect.height;
+  ctx.fillStyle = cssColor(getComputedStyle(sheet).backgroundColor, "#fff");
+  ctx.fillRect(sx, sy, sw, sh);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(sx, sy, sw, sh);
+  ctx.clip();
+
+  [...table.rows].forEach(row => {
+    [...row.cells].forEach(cell => {
+      const r = cell.getBoundingClientRect();
+      if (r.right < sheetRect.left || r.left > sheetRect.right || r.bottom < sheetRect.top || r.top > sheetRect.bottom) return;
+      const x = r.left - docRect.left, y = r.top - docRect.top;
+      const cw = r.width, ch = r.height;
+      const cs = getComputedStyle(cell);
+      ctx.fillStyle = cssColor(cs.backgroundColor, row.rowIndex === 0 ? "#f1f5f9" : "#fff");
+      ctx.fillRect(x, y, cw, ch);
+      ctx.strokeStyle = cssColor(cs.borderTopColor, "#d7dee8");
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + .5, y + .5, Math.max(0, cw - 1), Math.max(0, ch - 1));
+
+      const text = cell.innerText || cell.textContent || "";
+      if (!text) return;
+      const padL = parseFloat(cs.paddingLeft) || 6;
+      const fs = parseFloat(cs.fontSize) || 13;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x + 2, y + 1, Math.max(0, cw - 4), Math.max(0, ch - 2));
+      ctx.clip();
+      ctx.font = cssFont(cs);
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = cssColor(cs.color, "#1e293b");
+      ctx.fillText(text, x + padL, y + ch / 2 + Math.max(0, fs * .04));
+      ctx.restore();
+    });
+  });
+  ctx.restore();
+
+  return canvas;
+}
+
+async function captureSelection(rect, action){
+  if (!state || !state.el) return;
+  showLoading(action === "copy" ? "PNG 복사 중…" : "PNG 저장 중…");
+  try {
+    const docEl = state.el;
+    const dr = docEl.getBoundingClientRect();
+    const cr = byId("content").getBoundingClientRect();
+    const scale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    const viewportCanvas = renderXlsxViewportToCanvas(docEl, scale) || await renderDocViewportToCanvas(docEl, scale);
+    const sx = Math.max(0, rect.left - (dr.left - cr.left)) * scale;
+    const sy = Math.max(0, rect.top - (dr.top - cr.top)) * scale;
+    const sw = Math.min(rect.width * scale, viewportCanvas.width - sx);
+    const sh = Math.min(rect.height * scale, viewportCanvas.height - sy);
+    const out = document.createElement("canvas");
+    out.width = Math.max(1, Math.round(sw));
+    out.height = Math.max(1, Math.round(sh));
+    out.getContext("2d").drawImage(viewportCanvas, sx, sy, sw, sh, 0, 0, out.width, out.height);
+    if (action === "copy"){
+      const blob = await requireCanvasBlob(out, "image/png");
+      if (!navigator.clipboard || !window.ClipboardItem) throw new Error("clipboard-unsupported");
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      toast("PNG가 클립보드에 복사됐어요.");
+    } else {
+      const blob = await requireCanvasBlob(out, "image/png");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const base = (state.fileName || state.name || "capture").replace(/\.[^.]+$/i, "");
+      a.href = url;
+      a.download = base + "_capture.png";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      toast("PNG 저장 완료 ✓");
+    }
+    closeCaptureLayer();
+  } catch (e){
+    console.error(e);
+    toast(action === "copy" ? "복사하지 못했습니다. PNG 저장을 사용해 주세요." : "캡처 중 오류가 발생했습니다.", 3000);
+  } finally {
+    hideLoading();
+  }
+}
+
 /* ===== 서명 패드 ===== */
 let padCtx, padDpr, padDrawing = false, padDirty = false;
 function openSig(){
@@ -2026,6 +2333,8 @@ function wire(){
     addTextElement("date", { fontSize: 18, text: s });
   };
   byId("btnCheck").onclick = () => addTextElement("check", { fontSize: 30, color: "#16a34a", bold: true, text: "✓" });
+  byId("btnCapturePdf").onclick = startCaptureMode;
+  byId("btnCaptureOffice").onclick = startCaptureMode;
   byId("btnDownload").onclick = exportPdf;
   byId("btnPrint").onclick = () => window.print();
   byId("sbAdd").onclick = () => byId("fileInput").click();
