@@ -373,6 +373,9 @@ function toast(msg, ms=2200){
 }
 function showLoading(msg){ byId("loadingMsg").textContent = msg||"처리 중…"; byId("loading").hidden = false; }
 function hideLoading(){ byId("loading").hidden = true; }
+function updateLoading(msg){ if (msg) byId("loadingMsg").textContent = msg; }
+function yieldToBrowser(){ return new Promise(resolve => setTimeout(resolve, 0)); }
+const MAX_RENDER_DPR = 1.5;
 
 /* ===== 문서 관리(사이드바/탭) ===== */
 const IMG_EXTS = ["png","jpg","jpeg","gif","webp","bmp","svg","avif","ico"];
@@ -415,6 +418,7 @@ function closeDoc(id){
   if (d.kind === "pdf" && d.elements && d.elements.length){
     if (!confirm(`'${d.name}' 에 추가한 서명/텍스트가 사라집니다. 닫을까요?`)) return;
   }
+  d.closed = true;
   d.el.remove();
   docs.splice(i, 1);
   if (activeId === id){
@@ -522,12 +526,13 @@ async function loadZip(file){
     }
   }
 
-  // 3) 실제 추출 → 기존 파일 처리 파이프라인 재사용
+  // 3) 실제 추출 → 하나씩 열어 메모리 피크를 낮춤
   showLoading("압축 푸는 중…");
-  const inner = []; let failed = 0;
+  let opened = 0, failed = 0, r = null;
   try {
-    const r = new zip.ZipReader(new zip.BlobReader(file), password ? { password } : undefined);
-    for (const e of await r.getEntries()){
+    r = new zip.ZipReader(new zip.BlobReader(file), password ? { password } : undefined);
+    const entries = await r.getEntries();
+    for (const e of entries){
       if (e.directory) continue;
       const path = e.filename || "";
       if (path.indexOf("__MACOSX/") === 0) continue;
@@ -535,19 +540,31 @@ async function loadZip(file){
       if (!base || base.charAt(0) === ".") continue;
       const ext = (base.split(".").pop() || "").toLowerCase();
       if (!ZIP_OPENABLE.includes(ext)) continue;
-      try { const m = ZIP_MIME[ext]; inner.push(new File([await e.getData(new zip.BlobWriter())], base, m ? { type: m } : undefined)); }
-      catch(err){ failed++; }                               // 개별 추출 실패
+      try {
+        updateLoading(`압축 푸는 중… (${opened + failed + 1}/${openable})`);
+        const m = ZIP_MIME[ext];
+        const innerFile = new File([await e.getData(new zip.BlobWriter())], base, m ? { type: m } : undefined);
+        hideLoading();
+        await handleFiles([innerFile]);
+        opened++;
+        await yieldToBrowser();
+        showLoading(`압축 푸는 중… (${opened}/${openable})`);
+      } catch(err){
+        console.error(err);
+        failed++;
+      }                               // 개별 추출 실패
     }
-    await r.close();
   } catch(e){ console.error(e); }
+  finally {
+    try { if (r) await r.close(); } catch(e){ console.warn(e); }
+  }
   hideLoading();
 
-  if (!inner.length){ toast("압축을 풀지 못했어요.", 3000); return; }
-  await handleFiles(inner);
+  if (!opened){ toast("압축을 풀지 못했어요.", 3000); return; }
   const extra = [];
   if (skipped) extra.push(skipped + "개 미지원");
   if (failed)  extra.push(failed + "개 실패");
-  toast("📦 " + inner.length + "개 열기" + (extra.length ? " · " + extra.join(" · ") : ""), 3000);
+  toast("📦 " + opened + "개 열기" + (extra.length ? " · " + extra.join(" · ") : ""), 3000);
 }
 
 /* 암호 검증: 첫 암호화 엔트리를 주어진 암호로 풀어본다(성공=true) */
@@ -588,9 +605,12 @@ async function loadPdf(arrayBuffer, name){
 
     let rotatedWarn = false;
     for (let n = 1; n <= pdf.numPages; n++){
+      updateLoading(`PDF 여는 중… (${n}/${pdf.numPages})`);
+      if (doc.closed) return;
       const page = await pdf.getPage(n);
       if (page.rotate % 360 !== 0) rotatedWarn = true;
-      renderPage(page);
+      await renderPage(page, doc);
+      if (n % 2 === 0) await yieldToBrowser();
     }
 
     byId("hint").hidden = false;
@@ -605,10 +625,12 @@ async function loadPdf(arrayBuffer, name){
   }
 }
 
-function renderPage(page){
-  const dpr = window.devicePixelRatio || 1;
+async function renderPage(page, doc=state){
+  if (!doc || doc.closed) return;
+  const targetViewer = doc.el;
+  const dpr = Math.min(window.devicePixelRatio || 1, MAX_RENDER_DPR);
   const base = page.getViewport({ scale: 1 });           // 포인트 단위 크기
-  const avail = Math.min(900, viewer.clientWidth - 40);
+  const avail = Math.min(900, targetViewer.clientWidth - 40);
   let scale = avail / base.width;
   scale = Math.max(0.3, Math.min(scale, 2.2));           // 화면 표시 배율
   const vp = page.getViewport({ scale });
@@ -625,7 +647,6 @@ function renderPage(page){
   canvas.style.height = vp.height + "px";
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr);
-  page.render({ canvasContext: ctx, viewport: vp });
 
   const overlay = document.createElement("div");
   overlay.className = "overlay";
@@ -633,13 +654,17 @@ function renderPage(page){
 
   pageEl.appendChild(canvas);
   pageEl.appendChild(overlay);
-  viewer.appendChild(pageEl);
+  targetViewer.appendChild(pageEl);
 
-  state.pages.push({
+  doc.pages.push({
     pageEl, overlay, scale,
     ptW: base.width, ptH: base.height,
     rotation: page.rotate % 360,
   });
+
+  const task = page.render({ canvasContext: ctx, viewport: vp });
+  await task.promise;
+  if (typeof page.cleanup === "function") page.cleanup();
 }
 
 /* ===== 현재 보고 있는 페이지 ===== */
