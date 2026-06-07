@@ -57,10 +57,12 @@
     overflow:hidden;border-right:1px solid rgba(255,255,255,.06)}
   .sb-title{font-size:12px;color:#94a3b8;padding:14px 14px 8px;letter-spacing:.03em}
   .sb-list{flex:1;overflow:auto;padding:2px 8px}
-  .sb-item{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:8px;cursor:pointer;
+  .sb-item{display:flex;align-items:center;gap:7px;padding:9px 10px 9px calc(10px + var(--depth, 0) * 16px);border-radius:8px;cursor:pointer;
     font-size:13px;color:#e2e8f0;margin-bottom:2px}
   .sb-item:hover{background:rgba(255,255,255,.08)}
   .sb-item.active{background:var(--accent);color:#fff}
+  .sb-item.group{font-weight:650;color:#f8fafc}
+  .sb-twist{flex:0 0 12px;font-size:12px;color:#94a3b8;text-align:center}
   .sb-ic{flex:0 0 auto;font-size:15px}
   .sb-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .sb-close{flex:0 0 auto;border:0;background:transparent;color:inherit;cursor:pointer;opacity:.55;
@@ -397,7 +399,7 @@
       <div class="dz-inner" id="dzInner">
         <div class="dz-icon">📥</div>
         <h2>파일을 여기로 끌어다 놓으세요</h2>
-        <p>PDF · Word · Excel · PowerPoint · 이미지 · ZIP &nbsp;|&nbsp; 또는 클릭해서 선택</p>
+        <p>PDF · Word · Excel · PowerPoint · 이미지 · 폴더 · ZIP &nbsp;|&nbsp; 또는 클릭해서 선택</p>
         <div class="dz-note">🔒 인터넷 없이 동작합니다. 모든 처리는 이 브라우저 안에서만 이뤄지며 파일은 외부로 전송되지 않아요.<br>
           ✍️ 서명·편집은 PDF에서, 나머지는 미리보기로 · <b>여러 개를 한꺼번에 열 수 있어요</b></div>
         <input type="file" id="fileInput" accept=".pdf,.docx,.xlsx,.xls,.csv,.pptx,.md,.markdown,.txt,.zip,image/*" multiple hidden>
@@ -763,7 +765,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
  *   pdf 추가: { pdfBytes, fileName, pages[], elements[], selected, addCount }
  * state = 활성 문서(아래 PDF 함수들이 그대로 활성 문서에 동작), viewer = 활성 문서 컨테이너 */
 const docs = [];
-let activeId = 0, docSeq = 0;
+const navNodes = [];
+let activeId = 0, docSeq = 0, navSeq = 0;
 let state = null;        // 활성 문서
 let viewer = null;       // 활성 문서 컨테이너(pdf 렌더/측정용)
 let lastSig = null;      // 최근 서명(문서 공통, 재사용)
@@ -819,15 +822,24 @@ const ZIP_OPENABLE = ["pdf","docx","xlsx","xls","csv","pptx","md","markdown","tx
 const ZIP_MIME = { svg:"image/svg+xml", png:"image/png", jpg:"image/jpeg", jpeg:"image/jpeg",
   gif:"image/gif", webp:"image/webp", bmp:"image/bmp", avif:"image/avif", ico:"image/x-icon", pdf:"application/pdf" };
 
-function makeDoc(kind, name){
+function makeGroup(kind, name, parentId=null){
+  const node = { nodeId: "group:" + (++navSeq), type: "group", kind, name, parentId, expanded: true };
+  navNodes.push(node);
+  renderSidebar();
+  refreshChrome();
+  return node;
+}
+
+function makeDoc(kind, name, options={}){
   const id = ++docSeq;
   const el = document.createElement("div");
   el.className = (kind === "pdf") ? "viewer" : "office";
   el.hidden = true;
   byId("content").appendChild(el);
-  const d = { id, name, kind, el };
+  const d = { id, nodeId: "doc:" + id, parentId: options.parentId || null, name, kind, el };
   if (kind === "pdf"){ d.pdfBytes=null; d.fileName=name; d.pages=[]; d.elements=[]; d.selected=null; d.addCount=0; }
   docs.push(d);
+  navNodes.push({ nodeId: d.nodeId, type: "doc", docId: id, parentId: d.parentId });
   return d;
 }
 
@@ -845,18 +857,20 @@ function setActiveDoc(id){
   renderSidebar();
 }
 
-function closeDoc(id){
+function closeDoc(id, options={}){
   const i = docs.findIndex(d => d.id === id);
   if (i < 0) return;
   const d = docs[i];
-  if (d.kind === "pdf" && d.elements && d.elements.length){
+  if (!options.skipConfirm && d.kind === "pdf" && d.elements && d.elements.length){
     if (!confirm(`'${d.name}' 에 추가한 서명/텍스트가 사라집니다. 닫을까요?`)) return;
   }
   d.closed = true;
   d.el.remove();
   docs.splice(i, 1);
+  const ni = navNodes.findIndex(n => n.nodeId === d.nodeId);
+  if (ni >= 0) navNodes.splice(ni, 1);
   if (activeId === id){
-    if (docs.length) setActiveDoc(docs[Math.max(0, i-1)].id);
+    if (docs.length) setActiveDoc(docs[Math.max(0, Math.min(i, docs.length - 1))].id);
     else { state=null; viewer=null; byId("tools").hidden=true; byId("officeTools").hidden=true; }
   }
   refreshChrome();
@@ -864,6 +878,8 @@ function closeDoc(id){
 }
 
 function iconFor(kind, name){
+  if (kind === "folder") return "📁";
+  if (kind === "zip") return "📦";
   if (kind === "pdf") return "📄";
   if (kind === "image") return "🖼";
   const ext = (name.split(".").pop() || "").toLowerCase();
@@ -877,41 +893,91 @@ function iconFor(kind, name){
 function renderSidebar(){
   const list = byId("sbList");
   list.innerHTML = "";
-  docs.forEach(d => {
+  const childrenOf = (parentId) => navNodes.filter(n => n.parentId === parentId);
+  const draw = (parentId, depth=0) => childrenOf(parentId).forEach(node => {
+    const doc = node.type === "doc" ? docs.find(d => d.id === node.docId) : null;
+    if (node.type === "doc" && !doc) return;
     const item = document.createElement("div");
-    item.className = "sb-item" + (d.id === activeId ? " active" : "");
-    item.onclick = () => setActiveDoc(d.id);
-    const ic = document.createElement("span"); ic.className = "sb-ic"; ic.textContent = iconFor(d.kind, d.name);
-    const nm = document.createElement("span"); nm.className = "sb-name"; nm.textContent = d.name; nm.title = d.name;
+    item.className = "sb-item" + (doc && doc.id === activeId ? " active" : "") + (node.type === "group" ? " group" : "");
+    item.style.setProperty("--depth", depth);
+    item.onclick = () => {
+      if (node.type === "group"){ node.expanded = !node.expanded; renderSidebar(); }
+      else setActiveDoc(doc.id);
+    };
+    const twist = document.createElement("span");
+    twist.className = "sb-twist";
+    twist.textContent = node.type === "group" ? (node.expanded ? "▾" : "▸") : "";
+    const ic = document.createElement("span");
+    ic.className = "sb-ic";
+    ic.textContent = node.type === "group" ? iconFor(node.kind, node.name) : iconFor(doc.kind, doc.name);
+    const nm = document.createElement("span");
+    nm.className = "sb-name";
+    nm.textContent = node.type === "group" ? node.name : doc.name;
+    nm.title = nm.textContent;
     const cl = document.createElement("button"); cl.className = "sb-close"; cl.textContent = "✕"; cl.title = "닫기";
-    cl.onclick = (e) => { e.stopPropagation(); closeDoc(d.id); };
-    item.append(ic, nm, cl);
+    cl.onclick = (e) => {
+      e.stopPropagation();
+      if (node.type === "group") closeGroup(node.nodeId);
+      else closeDoc(doc.id);
+    };
+    item.append(twist, ic, nm, cl);
     list.appendChild(item);
+    if (node.type === "group" && node.expanded) draw(node.nodeId, depth + 1);
   });
+  draw(null);
+}
+
+function closeGroup(nodeId){
+  const group = navNodes.find(n => n.nodeId === nodeId && n.type === "group");
+  if (!group) return;
+  const ids = new Set([nodeId]);
+  let changed = true;
+  while (changed){
+    changed = false;
+    navNodes.forEach(n => {
+      if (!ids.has(n.nodeId) && ids.has(n.parentId)){
+        ids.add(n.nodeId);
+        changed = true;
+      }
+    });
+  }
+  const childDocs = docs.filter(d => ids.has(d.nodeId));
+  if (childDocs.some(d => d.kind === "pdf" && d.elements && d.elements.length)){
+    if (!confirm(`'${group.name}' 안에 추가한 서명/텍스트가 있는 PDF가 있습니다. 닫을까요?`)) return;
+  }
+  childDocs.forEach(d => closeDoc(d.id, { skipConfirm: true }));
+  for (let i = navNodes.length - 1; i >= 0; i--){
+    if (ids.has(navNodes[i].nodeId)) navNodes.splice(i, 1);
+  }
+  if (!docs.length){
+    activeId = 0; state=null; viewer=null; byId("tools").hidden=true; byId("officeTools").hidden=true;
+  } else if (!docs.some(d => d.id === activeId)) setActiveDoc(docs[0].id);
+  refreshChrome();
+  renderSidebar();
 }
 
 function refreshChrome(){
-  const has = docs.length > 0;
+  const has = navNodes.length > 0;
   dropzone.hidden = has;
   byId("sidebar").hidden = !has;
 }
 
 /* ===== 파일 로딩 ===== */
-async function handleFiles(files){
+async function handleFiles(files, options={}){
   for (const file of [...files]){
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     try {
-      if (ext === "pdf") await loadPdf(await file.arrayBuffer(), file.name);
-      else if (ext === "zip") await loadZip(file);
-      else if (["docx","xlsx","xls","csv","pptx","md","markdown","txt"].includes(ext)) await loadOffice(file, ext);
-      else if (IMG_EXTS.includes(ext)) await loadImage(file);
+      if (ext === "pdf") await loadPdf(await file.arrayBuffer(), file.name, options);
+      else if (ext === "zip") await loadZip(file, options);
+      else if (["docx","xlsx","xls","csv","pptx","md","markdown","txt"].includes(ext)) await loadOffice(file, ext, options);
+      else if (IMG_EXTS.includes(ext)) await loadImage(file, options);
       else toast("지원하지 않는 형식: " + file.name, 2500);
     } catch (e){ console.error(e); }
   }
 }
 
 /* ===== 압축(zip) 풀어서 내부 파일을 각각 열기 (zip.js — 무암호 + AES 암호 지원) ===== */
-async function loadZip(file){
+async function loadZip(file, options={}){
   if (typeof zip === "undefined"){ toast("압축 라이브러리를 불러오지 못했습니다."); return; }
   zip.configure({ useWebWorkers: false });                 // file:// 에서도 동작하도록 워커 미사용
   showLoading("압축 여는 중…");
@@ -960,6 +1026,22 @@ async function loadZip(file){
     }
   }
 
+  const zipGroup = makeGroup("zip", file.name, options.parentId || null);
+  const zipFolders = new Map();
+  function zipParentFor(path){
+    const parts = String(path || "").split("/").filter(Boolean);
+    parts.pop();
+    let parentId = zipGroup.nodeId, key = "";
+    for (const part of parts){
+      key = key ? key + "/" + part : part;
+      if (!zipFolders.has(key)){
+        zipFolders.set(key, makeGroup("folder", part, parentId).nodeId);
+      }
+      parentId = zipFolders.get(key);
+    }
+    return parentId;
+  }
+
   // 3) 실제 추출 → 하나씩 열어 메모리 피크를 낮춤
   showLoading("압축 푸는 중…");
   let opened = 0, failed = 0, r = null;
@@ -978,8 +1060,9 @@ async function loadZip(file){
         updateLoading(`압축 푸는 중… (${opened + failed + 1}/${openable})`);
         const m = ZIP_MIME[ext];
         const innerFile = new File([await e.getData(new zip.BlobWriter())], base, m ? { type: m } : undefined);
+        const parentId = zipParentFor(path);
         hideLoading();
-        await handleFiles([innerFile]);
+        await handleFiles([innerFile], { parentId });
         opened++;
         await yieldToBrowser();
         showLoading(`압축 푸는 중… (${opened}/${openable})`);
@@ -994,7 +1077,7 @@ async function loadZip(file){
   }
   hideLoading();
 
-  if (!opened){ toast("압축을 풀지 못했어요.", 3000); return; }
+  if (!opened){ closeGroup(zipGroup.nodeId); toast("압축을 풀지 못했어요.", 3000); return; }
   const extra = [];
   if (skipped) extra.push(skipped + "개 미지원");
   if (failed)  extra.push(failed + "개 실패");
@@ -1012,21 +1095,82 @@ async function zipPasswordOk(file, pw){
   } catch(e){ return false; }
 }
 
-function queueFiles(files){
+function queueFiles(files, options={}){
   const batch = [...files];
   if (!batch.length) return fileQueue;
   fileQueue = fileQueue
-    .then(() => handleFiles(batch))
+    .then(() => handleFiles(batch, options))
     .catch((e) => { console.error(e); });
   return fileQueue;
 }
 
-async function loadPdf(arrayBuffer, name){
+function readEntryFile(entry){
+  return new Promise((resolve, reject) => entry.file(resolve, reject));
+}
+
+function readDirectoryEntries(reader){
+  return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+}
+
+async function readAllDirectoryEntries(entry){
+  const reader = entry.createReader();
+  const all = [];
+  for (;;){
+    const batch = await readDirectoryEntries(reader);
+    if (!batch.length) break;
+    all.push(...batch);
+  }
+  return all;
+}
+
+async function handleEntry(entry, parentId=null){
+  if (!entry) return;
+  if (entry.isDirectory){
+    const group = makeGroup("folder", entry.name, parentId);
+    const entries = await readAllDirectoryEntries(entry);
+    entries.sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name));
+    for (const child of entries) await handleEntry(child, group.nodeId);
+    if (!navNodes.some(n => n.parentId === group.nodeId)) closeGroup(group.nodeId);
+    return;
+  }
+  if (entry.isFile){
+    const file = await readEntryFile(entry);
+    await handleFiles([file], { parentId });
+  }
+}
+
+async function handleDroppedItems(items){
+  let usedEntries = false;
+  for (const item of [...items]){
+    if (item.kind !== "file") continue;
+    const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+    if (!entry) continue;
+    usedEntries = true;
+    await handleEntry(entry, null);
+  }
+  return usedEntries;
+}
+
+function queueDroppedItems(dataTransfer){
+  const items = dataTransfer && dataTransfer.items;
+  const files = dataTransfer && dataTransfer.files ? [...dataTransfer.files] : [];
+  if (!items || !items.length) return queueFiles(files);
+  const itemList = [...items];
+  fileQueue = fileQueue
+    .then(async () => {
+      const usedEntries = await handleDroppedItems(itemList);
+      if (!usedEntries && files.length) await handleFiles(files);
+    })
+    .catch((e) => { console.error(e); });
+  return fileQueue;
+}
+
+async function loadPdf(arrayBuffer, name, options={}){
   if (typeof pdfjsLib === "undefined" || typeof PDFLib === "undefined"){
     toast("라이브러리 로드 실패 — 인터넷 연결을 확인하세요."); return;
   }
   showLoading("PDF 여는 중…");
-  const doc = makeDoc("pdf", name || "document.pdf");
+  const doc = makeDoc("pdf", name || "document.pdf", options);
   try {
     await ensureWorker();
     doc.pdfBytes = arrayBuffer;            // 원본은 그대로 보관
@@ -1417,9 +1561,9 @@ function insertSig(){
 }
 
 /* ===== 오피스 미리보기 (보기 전용) ===== */
-async function loadOffice(file, ext){
+async function loadOffice(file, ext, options={}){
   showLoading("여는 중…");
-  const doc = makeDoc("office", file.name);
+  const doc = makeDoc("office", file.name, options);
   try {
     setActiveDoc(doc.id);
     refreshChrome();
@@ -1793,9 +1937,9 @@ function waitForPptxRender(div){
 }
 
 /* ===== 이미지 미리보기 (보기 전용 + 줌) ===== */
-async function loadImage(file){
+async function loadImage(file, options={}){
   showLoading("여는 중…");
-  const doc = makeDoc("image", file.name);
+  const doc = makeDoc("image", file.name, options);
   try {
     setActiveDoc(doc.id);
     refreshChrome();
@@ -1862,7 +2006,7 @@ function wire(){
   }));
   ["dragleave","drop"].forEach(ev => dropzone.addEventListener(ev, (e) => {
     e.preventDefault(); e.stopPropagation(); dropzone.classList.remove("drag");
-    if (ev === "drop" && !internalDrag && e.dataTransfer.files.length) queueFiles(e.dataTransfer.files);
+    if (ev === "drop" && !internalDrag && e.dataTransfer.files.length) queueDroppedItems(e.dataTransfer);
   }));
 
   // 창 전체로 파일이 떨어져 브라우저가 이동하는 것 방지 + 파일 처리는 여기 한 곳에서만
@@ -1870,7 +2014,7 @@ function wire(){
   window.addEventListener("drop", (e) => {
     e.preventDefault();
     if (internalDrag) return;                                            // 페이지 안에서 시작된 드래그(이미지 등)는 무시
-    if (e.dataTransfer.files.length) queueFiles(e.dataTransfer.files);   // 드롭존/콘텐츠 어디에 떨궈도 새 탭으로 추가
+    if (e.dataTransfer.files.length) queueDroppedItems(e.dataTransfer);   // 드롭존/콘텐츠 어디에 떨궈도 새 탭으로 추가
   });
 
   // 툴바
