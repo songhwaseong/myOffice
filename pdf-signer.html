@@ -1,0 +1,1167 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF 서명 &amp; 편집기</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#eef2f7;--panel:#fff;--ink:#1e293b;--muted:#64748b;
+    --accent:#4f46e5;--accent-d:#4338ca;--border:#e2e8f0;--danger:#ef4444;
+  }
+  html,body{height:100%}
+  body{font-family:"Malgun Gothic","맑은 고딕",-apple-system,system-ui,"Segoe UI",sans-serif;
+    background:var(--bg);color:var(--ink);display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+  /* ---- 상단 툴바 ---- */
+  header{background:#1e293b;color:#fff;display:flex;align-items:center;gap:12px;
+    padding:10px 16px;flex:0 0 auto;box-shadow:0 2px 8px rgba(0,0,0,.15);z-index:20}
+  .brand{font-weight:700;font-size:16px;display:flex;align-items:center;gap:8px;white-space:nowrap}
+  .tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .spacer{flex:1}
+  header button{font:inherit;font-size:13px;border:1px solid rgba(255,255,255,.18);
+    background:rgba(255,255,255,.08);color:#fff;padding:7px 12px;border-radius:8px;cursor:pointer;
+    transition:.12s;white-space:nowrap}
+  header button:hover{background:rgba(255,255,255,.18)}
+  header button.primary{background:var(--accent);border-color:var(--accent)}
+  header button.primary:hover{background:var(--accent-d)}
+
+  /* ---- 본문 (사이드바 + 콘텐츠) ---- */
+  main{flex:1;display:flex;min-height:0;overflow:hidden}
+  #sidebar{flex:0 0 220px;background:#0f172a;color:#cbd5e1;display:flex;flex-direction:column;
+    overflow:hidden;border-right:1px solid rgba(255,255,255,.06)}
+  .sb-title{font-size:12px;color:#94a3b8;padding:14px 14px 8px;letter-spacing:.03em}
+  .sb-list{flex:1;overflow:auto;padding:2px 8px}
+  .sb-item{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:8px;cursor:pointer;
+    font-size:13px;color:#e2e8f0;margin-bottom:2px}
+  .sb-item:hover{background:rgba(255,255,255,.08)}
+  .sb-item.active{background:var(--accent);color:#fff}
+  .sb-ic{flex:0 0 auto;font-size:15px}
+  .sb-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sb-close{flex:0 0 auto;border:0;background:transparent;color:inherit;cursor:pointer;opacity:.55;
+    font-size:13px;width:20px;height:20px;border-radius:5px}
+  .sb-close:hover{opacity:1;background:rgba(255,255,255,.22)}
+  .sb-add{margin:8px;padding:10px;border:1px dashed rgba(255,255,255,.25);border-radius:8px;
+    background:transparent;color:#cbd5e1;cursor:pointer;font:inherit;font-size:13px}
+  .sb-add:hover{background:rgba(255,255,255,.08);border-color:var(--accent)}
+  #content{position:relative;flex:1;min-width:0;overflow:hidden}
+
+  .dropzone{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px}
+  .dz-inner{width:min(560px,92%);border:2.5px dashed #b9c4d4;border-radius:18px;background:var(--panel);
+    padding:54px 28px;text-align:center;cursor:pointer;transition:.15s}
+  .dz-inner:hover,.dropzone.drag .dz-inner{border-color:var(--accent);background:#f5f6ff;transform:translateY(-2px)}
+  .dz-icon{font-size:54px;margin-bottom:10px}
+  .dz-inner h2{font-size:20px;margin-bottom:8px}
+  .dz-inner p{color:var(--muted);font-size:14px}
+  .dz-note{margin-top:18px;font-size:12px;color:var(--muted)}
+
+  .viewer{position:absolute;inset:0;overflow:auto;padding:24px 12px 80px}
+  .page{position:relative;margin:0 auto 22px;background:#fff;box-shadow:0 4px 18px rgba(15,23,42,.14);
+    border-radius:4px}
+  .page canvas{display:block;border-radius:4px}
+  .overlay{position:absolute;inset:0}
+
+  /* ---- 배치된 요소 ---- */
+  .placed{position:absolute;cursor:move;touch-action:none;user-select:none}
+  .placed.selected{outline:2px solid var(--accent);outline-offset:2px}
+  .placed img{display:block;width:100%;height:100%;pointer-events:none}
+  .text-edit{display:inline-block;min-width:14px;line-height:1.3;white-space:pre;
+    padding:2px 5px;color:#111;font-size:18px;outline:none;cursor:text}
+  .text-edit:empty:before{content:"텍스트 입력";color:#94a3b8}
+  .placed .ctrl{position:absolute;top:-38px;left:0;display:none;gap:4px;align-items:center;
+    background:#1e293b;padding:5px 6px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.2);
+    white-space:nowrap;cursor:default}
+  .placed.selected .ctrl{display:flex}
+  .ctrl button{font:inherit;font-size:13px;border:0;background:rgba(255,255,255,.12);color:#fff;
+    width:26px;height:26px;border-radius:6px;cursor:pointer;line-height:1;display:flex;
+    align-items:center;justify-content:center}
+  .ctrl button:hover{background:rgba(255,255,255,.28)}
+  .ctrl button.del{background:var(--danger)}
+  .ctrl .sw{width:18px;height:18px;border-radius:50%;border:2px solid #fff;cursor:pointer}
+  .grip{position:absolute;right:-7px;bottom:-7px;width:16px;height:16px;background:var(--accent);
+    border:2px solid #fff;border-radius:50%;cursor:nwse-resize;display:none}
+  .placed.selected .grip{display:block}
+
+  /* ---- 서명 모달 ---- */
+  .modal{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;
+    justify-content:center;z-index:50;padding:20px}
+  .modal-card{background:#fff;border-radius:16px;padding:22px;width:min(640px,96%);
+    box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .modal-card h3{font-size:18px;margin-bottom:4px}
+  .modal-card .sub{color:var(--muted);font-size:13px;margin-bottom:14px}
+  .lastsig{display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:10px 12px;
+    background:#f1f5f9;border-radius:10px;font-size:13px;color:var(--muted)}
+  .lastsig img{max-height:46px;max-width:200px;background:#fff;border:1px solid var(--border);
+    border-radius:6px;padding:3px}
+  .lastsig .btn{margin-left:auto;padding:7px 12px}
+  .pad-wrap{position:relative;border:2px dashed #cbd5e1;border-radius:12px;background:#fafbff;overflow:hidden}
+  #sigPad{display:block;width:100%;height:240px;touch-action:none;cursor:crosshair}
+  .pad-base{position:absolute;left:0;right:0;bottom:30px;border-bottom:1.5px solid #cbd5e1;
+    pointer-events:none}
+  .modal-actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}
+  .modal-actions .spacer{flex:1}
+  .pw-input{width:100%;font:inherit;font-size:15px;padding:11px 13px;border:1px solid var(--border);
+    border-radius:9px;outline:none;margin-top:4px}
+  .pw-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,70,229,.15)}
+  .btn{font:inherit;font-size:14px;padding:9px 16px;border-radius:9px;cursor:pointer;border:1px solid var(--border);
+    background:#fff;color:var(--ink)}
+  .btn:hover{background:#f1f5f9}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-d)}
+
+  /* ---- 토스트 / 로딩 ---- */
+  .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#1e293b;color:#fff;
+    padding:11px 18px;border-radius:10px;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.25);z-index:60;
+    opacity:0;transition:.2s;pointer-events:none}
+  .toast.show{opacity:1}
+  .loading{position:fixed;inset:0;background:rgba(255,255,255,.7);display:flex;align-items:center;
+    justify-content:center;flex-direction:column;gap:14px;z-index:70;backdrop-filter:blur(2px)}
+  .spinner{width:46px;height:46px;border:4px solid #d8def0;border-top-color:var(--accent);
+    border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loading p{font-size:14px;color:var(--muted)}
+  [hidden]{display:none!important}
+  .hint{position:fixed;right:16px;bottom:16px;background:#1e293b;color:#cbd5e1;font-size:12px;
+    padding:8px 12px;border-radius:8px;opacity:.85;z-index:15;max-width:280px;line-height:1.5}
+  /* ===== 오피스 뷰어 ===== */
+  .tools .ofname{font-weight:600;font-size:14px;color:#fff;max-width:50vw;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .office{position:absolute;inset:0;overflow:auto;background:#e8edf3;padding:24px 12px 60px}
+  .docx-host{margin:0 auto}
+  .pptx-host{margin:0 auto;max-width:1080px}
+  .xlsx-tabs{display:flex;gap:6px;flex-wrap:wrap;max-width:1080px;margin:0 auto 12px}
+  .xlsx-tab{font:inherit;font-size:13px;padding:7px 14px;border:1px solid var(--border);
+    background:#fff;border-radius:8px 8px 0 0;cursor:pointer;color:var(--muted)}
+  .xlsx-tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .xlsx-sheet{max-width:1080px;margin:0 auto;background:#fff;border-radius:8px;overflow:auto;
+    max-height:calc(100vh - 160px);box-shadow:0 4px 18px rgba(15,23,42,.12)}
+  .xlsx-sheet table{border-collapse:collapse;font-size:13px;width:100%}
+  .xlsx-sheet td,.xlsx-sheet th{border:1px solid #d7dee8;padding:5px 9px;white-space:nowrap;color:#1e293b}
+  .xlsx-sheet tr:first-child td{background:#f1f5f9;font-weight:600;position:sticky;top:0}
+  .img-host{min-height:100%;display:flex;align-items:flex-start;justify-content:center}
+  .img-view{display:block;background:#fff;box-shadow:0 4px 18px rgba(15,23,42,.18);border-radius:4px;
+    max-width:100%;max-height:calc(100vh - 150px);cursor:zoom-in}
+  .img-zoom{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);display:flex;gap:6px;
+    align-items:center;background:#1e293b;color:#fff;padding:6px 10px;border-radius:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.25);z-index:14;font-size:13px}
+  .img-zoom button{font:inherit;border:0;background:rgba(255,255,255,.14);color:#fff;width:30px;
+    height:30px;border-radius:7px;cursor:pointer}
+  .img-zoom button:hover{background:rgba(255,255,255,.3)}
+  .img-zoom span{min-width:52px;text-align:center}
+  @media print{
+    header,.hint,.toast,#dropzone,#tools,#officeTools,#loading,.img-zoom,#sidebar{display:none!important}
+    main{position:static;overflow:visible}
+    .office,.viewer{position:static;overflow:visible;padding:0;background:#fff}
+    .page,.docx-host,.pptx-host,.xlsx-sheet{box-shadow:none!important}
+  }
+</style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/meshesha/PPTXjs@master/css/pptxjs.css">
+</head>
+<body>
+
+<header>
+  <div class="brand">📄 PDF 서명 &amp; 편집기</div>
+  <div class="tools" id="tools" hidden>
+    <span class="ofname" id="pdfName"></span>
+    <button id="btnSign">✍️ 서명</button>
+    <button id="btnText">🔤 텍스트</button>
+    <button id="btnDate">📅 날짜</button>
+    <button id="btnCheck">✓ 체크</button>
+    <span class="spacer"></span>
+    <button id="btnDownload" class="primary">⬇️ 다운로드</button>
+  </div>
+  <div class="tools" id="officeTools" hidden>
+    <span class="ofname" id="officeName"></span>
+    <span class="spacer"></span>
+    <button id="btnPrint">🖨 인쇄 / PDF로 저장</button>
+  </div>
+</header>
+
+<main>
+  <div id="sidebar" hidden>
+    <div class="sb-title">열린 파일</div>
+    <div class="sb-list" id="sbList"></div>
+    <button class="sb-add" id="sbAdd">＋ 파일 추가</button>
+  </div>
+  <div id="content">
+    <div class="dropzone" id="dropzone">
+      <div class="dz-inner" id="dzInner">
+        <div class="dz-icon">📥</div>
+        <h2>파일을 여기로 끌어다 놓으세요</h2>
+        <p>PDF · Word · Excel · PowerPoint · 이미지 &nbsp;|&nbsp; 또는 클릭해서 선택</p>
+        <div class="dz-note">🔒 모든 처리는 이 브라우저 안에서만 이뤄집니다. 파일은 외부로 전송되지 않아요.<br>
+          ✍️ 서명·편집은 PDF에서, 나머지는 미리보기로 · <b>여러 개를 한꺼번에 열 수 있어요</b></div>
+        <input type="file" id="fileInput" accept=".pdf,.docx,.xlsx,.xls,.csv,.pptx,image/*" multiple hidden>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- 서명 모달 -->
+<div class="modal" id="sigModal" hidden>
+  <div class="modal-card">
+    <h3>서명 추가</h3>
+    <div class="sub">아래에 직접 그리거나, 서명 이미지를 업로드하세요.</div>
+    <div class="lastsig" id="lastSigRow" hidden>
+      <span>최근 서명</span>
+      <img id="lastSigThumb" alt="최근 서명">
+      <button class="btn" id="sigReuse">다시 사용</button>
+    </div>
+    <div class="pad-wrap">
+      <canvas id="sigPad"></canvas>
+      <div class="pad-base"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="sigClear">지우기</button>
+      <button class="btn" id="sigUpload">🖼 이미지 업로드</button>
+      <input type="file" id="sigFile" accept="image/*" hidden>
+      <span class="spacer"></span>
+      <button class="btn" id="sigCancel">취소</button>
+      <button class="btn primary" id="sigInsert">삽입</button>
+    </div>
+  </div>
+</div>
+
+<!-- 암호 입력 모달 -->
+<div class="modal" id="pwModal" hidden>
+  <div class="modal-card" style="width:min(420px,96%)">
+    <h3>🔒 암호 입력</h3>
+    <div class="sub" id="pwSub">암호로 보호된 파일입니다. 암호를 입력하세요.</div>
+    <input type="password" id="pwInput" class="pw-input" placeholder="암호" autocomplete="off">
+    <div class="modal-actions">
+      <span class="spacer"></span>
+      <button class="btn" id="pwCancel">취소</button>
+      <button class="btn primary" id="pwOk">확인</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="loading" id="loading" hidden><div class="spinner"></div><p id="loadingMsg">처리 중…</p></div>
+<div class="hint" id="hint" hidden>요소를 끌어 위치 이동 · 더블클릭으로 텍스트 수정 · 모서리로 크기 조절 · Delete 키로 삭제</div>
+
+<!-- 오피스 미리보기 라이브러리 (순서 중요: jszip/jquery 가 먼저) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/2.6.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.min.js"></script>
+<script>
+window.FileReaderJS = window.FileReaderJS || {
+  setSync: function(){},
+  setupBlob: function(blob, options){
+    const reader = new FileReader();
+    const on = options && options.on || {};
+    reader.onload = function(event){ if (on.load) on.load(event, blob); };
+    reader.onerror = function(event){ if (on.error) on.error(event, blob); };
+    const mode = options && options.readAsDefault || "ArrayBuffer";
+    if (mode === "DataURL") reader.readAsDataURL(blob);
+    else if (mode === "Text") reader.readAsText(blob);
+    else reader.readAsArrayBuffer(blob);
+  },
+  setupDrop: function(){},
+  setupInput: function(){}
+};
+</script>
+<script src="https://cdn.jsdelivr.net/gh/meshesha/PPTXjs@master/js/divs2slides.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/meshesha/PPTXjs@master/js/pptxjs.min.js"></script>
+<script src="https://unpkg.com/docx-preview@0.3.5/dist/docx-preview.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- 오피스 열기암호 복호화 (Agile) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+<script src="vendor/office-decrypt.js"></script>
+<!-- PDF 서명/편집 라이브러리 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script>
+"use strict";
+
+/* ===== 다중 문서 상태 =====
+ * docs: 열린 문서들. 각 문서는 자체 컨테이너(el)를 가지며 활성 문서만 보인다.
+ *   공통: { id, name, kind:'pdf'|'office'|'image', el }
+ *   pdf 추가: { pdfBytes, fileName, pages[], elements[], selected, addCount }
+ * state = 활성 문서(아래 PDF 함수들이 그대로 활성 문서에 동작), viewer = 활성 문서 컨테이너 */
+const docs = [];
+let activeId = 0, docSeq = 0;
+let state = null;        // 활성 문서
+let viewer = null;       // 활성 문서 컨테이너(pdf 렌더/측정용)
+let lastSig = null;      // 최근 서명(문서 공통, 재사용)
+
+let fileQueue = Promise.resolve();
+
+const byId = (id) => document.getElementById(id);
+const dropzone = byId("dropzone");
+
+/* ===== pdf.js 워커 (file:// 에서도 동작하도록 blob 으로) ===== */
+let workerReady = null;
+function ensureWorker(){
+  if (workerReady) return workerReady;
+  workerReady = (async () => {
+    // 1) 인라인 워커(오프라인 빌드)가 있으면 우선 사용
+    const inline = document.getElementById("pdfWorkerSrc");
+    if (inline && inline.textContent.trim().length > 100){
+      const blob = new Blob([inline.textContent], { type: "application/javascript" });
+      pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
+      return;
+    }
+    // 2) 없으면 CDN 워커를 blob 으로 받아 사용 (file:// 호환)
+    const url = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    try {
+      const res = await fetch(url);
+      const txt = await res.text();
+      const blob = new Blob([txt], { type: "application/javascript" });
+      pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
+    } catch (e) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = url; // 실패 시 fallback
+    }
+  })();
+  return workerReady;
+}
+
+/* ===== 유틸 ===== */
+let toastTimer;
+function toast(msg, ms=2200){
+  const t = byId("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove("show"), ms);
+}
+function showLoading(msg){ byId("loadingMsg").textContent = msg||"처리 중…"; byId("loading").hidden = false; }
+function hideLoading(){ byId("loading").hidden = true; }
+
+/* ===== 문서 관리(사이드바/탭) ===== */
+const IMG_EXTS = ["png","jpg","jpeg","gif","webp","bmp","svg","avif","ico"];
+
+function makeDoc(kind, name){
+  const id = ++docSeq;
+  const el = document.createElement("div");
+  el.className = (kind === "pdf") ? "viewer" : "office";
+  el.hidden = true;
+  byId("content").appendChild(el);
+  const d = { id, name, kind, el };
+  if (kind === "pdf"){ d.pdfBytes=null; d.fileName=name; d.pages=[]; d.elements=[]; d.selected=null; d.addCount=0; }
+  docs.push(d);
+  return d;
+}
+
+function setActiveDoc(id){
+  activeId = id;
+  docs.forEach(d => { d.el.hidden = (d.id !== id); });
+  const d = docs.find(x => x.id === id);
+  if (!d){ state=null; viewer=null; byId("tools").hidden=true; byId("officeTools").hidden=true; renderSidebar(); return; }
+  state = d;
+  viewer = d.el;
+  byId("tools").hidden = (d.kind !== "pdf");
+  byId("officeTools").hidden = (d.kind === "pdf");
+  if (d.kind === "pdf") byId("pdfName").textContent = d.name;
+  else byId("officeName").textContent = d.name;
+  renderSidebar();
+}
+
+function closeDoc(id){
+  const i = docs.findIndex(d => d.id === id);
+  if (i < 0) return;
+  const d = docs[i];
+  if (d.kind === "pdf" && d.elements && d.elements.length){
+    if (!confirm(`'${d.name}' 에 추가한 서명/텍스트가 사라집니다. 닫을까요?`)) return;
+  }
+  d.el.remove();
+  docs.splice(i, 1);
+  if (activeId === id){
+    if (docs.length) setActiveDoc(docs[Math.max(0, i-1)].id);
+    else { state=null; viewer=null; byId("tools").hidden=true; byId("officeTools").hidden=true; }
+  }
+  refreshChrome();
+  renderSidebar();
+}
+
+function iconFor(kind, name){
+  if (kind === "pdf") return "📄";
+  if (kind === "image") return "🖼";
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  if (ext === "docx") return "📝";
+  if (ext === "pptx") return "📑";
+  return "📊";
+}
+
+function renderSidebar(){
+  const list = byId("sbList");
+  list.innerHTML = "";
+  docs.forEach(d => {
+    const item = document.createElement("div");
+    item.className = "sb-item" + (d.id === activeId ? " active" : "");
+    item.onclick = () => setActiveDoc(d.id);
+    const ic = document.createElement("span"); ic.className = "sb-ic"; ic.textContent = iconFor(d.kind, d.name);
+    const nm = document.createElement("span"); nm.className = "sb-name"; nm.textContent = d.name; nm.title = d.name;
+    const cl = document.createElement("button"); cl.className = "sb-close"; cl.textContent = "✕"; cl.title = "닫기";
+    cl.onclick = (e) => { e.stopPropagation(); closeDoc(d.id); };
+    item.append(ic, nm, cl);
+    list.appendChild(item);
+  });
+}
+
+function refreshChrome(){
+  const has = docs.length > 0;
+  dropzone.hidden = has;
+  byId("sidebar").hidden = !has;
+}
+
+/* ===== 파일 로딩 ===== */
+async function handleFiles(files){
+  for (const file of [...files]){
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    try {
+      if (ext === "pdf") await loadPdf(await file.arrayBuffer(), file.name);
+      else if (["docx","xlsx","xls","csv","pptx"].includes(ext)) await loadOffice(file, ext);
+      else if (IMG_EXTS.includes(ext)) await loadImage(file);
+      else toast("지원하지 않는 형식: " + file.name, 2500);
+    } catch (e){ console.error(e); }
+  }
+}
+
+function queueFiles(files){
+  const batch = [...files];
+  if (!batch.length) return fileQueue;
+  fileQueue = fileQueue
+    .then(() => handleFiles(batch))
+    .catch((e) => { console.error(e); });
+  return fileQueue;
+}
+
+async function loadPdf(arrayBuffer, name){
+  if (typeof pdfjsLib === "undefined" || typeof PDFLib === "undefined"){
+    toast("라이브러리 로드 실패 — 인터넷 연결을 확인하세요."); return;
+  }
+  showLoading("PDF 여는 중…");
+  const doc = makeDoc("pdf", name || "document.pdf");
+  try {
+    await ensureWorker();
+    doc.pdfBytes = arrayBuffer;            // 원본은 그대로 보관
+    doc.fileName = name || "document.pdf";
+    setActiveDoc(doc.id);                  // 컨테이너를 보이게 한 뒤 렌더(너비 측정 정확)
+    refreshChrome();
+
+    const data = new Uint8Array(arrayBuffer.slice(0)); // pdf.js 에는 복사본 전달
+    const pdf = await pdfjsLib.getDocument({ data }).promise;
+
+    let rotatedWarn = false;
+    for (let n = 1; n <= pdf.numPages; n++){
+      const page = await pdf.getPage(n);
+      if (page.rotate % 360 !== 0) rotatedWarn = true;
+      renderPage(page);
+    }
+
+    byId("hint").hidden = false;
+    setTimeout(()=>{ byId("hint").hidden = true; }, 6000);
+    if (rotatedWarn) toast("회전된 페이지가 있어 위치가 약간 어긋날 수 있어요.", 3500);
+  } catch (e){
+    console.error(e);
+    toast("PDF 를 열지 못했습니다. (암호 걸린 파일은 미지원)", 3500);
+    closeDoc(doc.id);
+  } finally {
+    hideLoading();
+  }
+}
+
+function renderPage(page){
+  const dpr = window.devicePixelRatio || 1;
+  const base = page.getViewport({ scale: 1 });           // 포인트 단위 크기
+  const avail = Math.min(900, viewer.clientWidth - 40);
+  let scale = avail / base.width;
+  scale = Math.max(0.3, Math.min(scale, 2.2));           // 화면 표시 배율
+  const vp = page.getViewport({ scale });
+
+  const pageEl = document.createElement("div");
+  pageEl.className = "page";
+  pageEl.style.width = vp.width + "px";
+  pageEl.style.height = vp.height + "px";
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(vp.width * dpr);
+  canvas.height = Math.round(vp.height * dpr);
+  canvas.style.width = vp.width + "px";
+  canvas.style.height = vp.height + "px";
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  page.render({ canvasContext: ctx, viewport: vp });
+
+  const overlay = document.createElement("div");
+  overlay.className = "overlay";
+  overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) selectEl(null); });
+
+  pageEl.appendChild(canvas);
+  pageEl.appendChild(overlay);
+  viewer.appendChild(pageEl);
+
+  state.pages.push({
+    pageEl, overlay, scale,
+    ptW: base.width, ptH: base.height,
+    rotation: page.rotate % 360,
+  });
+}
+
+/* ===== 현재 보고 있는 페이지 ===== */
+function currentPageIndex(){
+  const vr = viewer.getBoundingClientRect();
+  const center = vr.top + vr.height/2;
+  let best = 0, bestD = Infinity;
+  state.pages.forEach((p,i) => {
+    const r = p.pageEl.getBoundingClientRect();
+    const d = Math.abs((r.top + r.height/2) - center);
+    if (d < bestD){ bestD = d; best = i; }
+  });
+  return best;
+}
+
+/* ===== 요소 선택/삭제 ===== */
+function selectEl(el){
+  if (state.selected && state.selected !== el) state.selected.classList.remove("selected");
+  state.selected = el;
+  if (el) el.classList.add("selected");
+}
+function removeEl(el){
+  state.elements = state.elements.filter(x => x.el !== el);
+  if (state.selected === el) state.selected = null;
+  el.remove();
+}
+
+/* ===== 공통: 배치 요소 생성 ===== */
+function placeBase(pageIndex, kind){
+  const p = state.pages[pageIndex];
+  const el = document.createElement("div");
+  el.className = "placed";
+  el.__kind = kind;
+
+  // 컨트롤 바 (삭제 + 텍스트면 글자크기/색상)
+  const ctrl = document.createElement("div");
+  ctrl.className = "ctrl";
+  ctrl.addEventListener("pointerdown", e => e.stopPropagation());
+  const isText = (kind === "text" || kind === "date" || kind === "check");
+  if (isText){
+    const aMinus = btn("A−"), aPlus = btn("A+");
+    aMinus.onclick = () => changeFont(el, -2);
+    aPlus.onclick  = () => changeFont(el, +2);
+    ctrl.append(aMinus, aPlus);
+    ["#111","#1d4ed8","#dc2626","#16a34a"].forEach(c => {
+      const sw = document.createElement("span");
+      sw.className = "sw"; sw.style.background = c;
+      sw.onclick = () => { const t = el.querySelector(".text-edit"); if (t) t.style.color = c; };
+      ctrl.appendChild(sw);
+    });
+  }
+  const del = btn("✕"); del.className = "del"; del.onclick = () => removeEl(el);
+  ctrl.appendChild(del);
+  el.appendChild(ctrl);
+
+  // 위치: 현재 페이지 가시 영역 근처, 살짝 계단식
+  const off = (state.addCount++ % 8) * 14;
+  const vr = viewer.getBoundingClientRect();
+  const pr = p.pageEl.getBoundingClientRect();
+  let top = (vr.top + vr.height/2) - pr.top - 20 + off;
+  top = Math.max(8, Math.min(top, p.pageEl.clientHeight - 60));
+  el.style.left = (30 + off) + "px";
+  el.style.top  = top + "px";
+
+  p.overlay.appendChild(el);
+  state.elements.push({ el, pageIndex, kind });
+  makeDraggable(el);
+  return el;
+}
+function btn(label){ const b = document.createElement("button"); b.textContent = label; return b; }
+function changeFont(el, d){
+  const t = el.querySelector(".text-edit"); if (!t) return;
+  const cur = parseFloat(getComputedStyle(t).fontSize) || 18;
+  t.style.fontSize = Math.max(8, Math.min(96, cur + d)) + "px";
+}
+
+/* ===== 이미지(서명) 요소 ===== */
+function addImageElement(dataUrl, aspect, pageIndex){
+  const el = placeBase(pageIndex, "signature");
+  const w = 200, h = w / aspect;
+  el.style.width = w + "px";
+  el.style.height = h + "px";
+  el.__aspect = aspect;
+  el.__dataUrl = dataUrl;
+  const img = document.createElement("img");
+  img.src = dataUrl; el.appendChild(img);
+  const grip = document.createElement("div");
+  grip.className = "grip"; el.appendChild(grip);
+  makeResizable(el, grip);
+  selectEl(el);
+}
+
+/* ===== 텍스트류 요소 ===== */
+function addTextElement(kind, opts={}){
+  const pageIndex = currentPageIndex();
+  const el = placeBase(pageIndex, kind);
+  const t = document.createElement("div");
+  t.className = "text-edit";
+  if (opts.fontSize) t.style.fontSize = opts.fontSize + "px";
+  if (opts.color)    t.style.color = opts.color;
+  if (opts.bold)     t.style.fontWeight = "700";
+  if (opts.text)     t.textContent = opts.text;
+  el.appendChild(t);
+
+  // 더블클릭으로 편집, 추가 직후엔 바로 편집모드
+  el.addEventListener("dblclick", () => startEdit(t));
+  t.addEventListener("blur", () => { t.contentEditable = "false"; });
+  t.addEventListener("keydown", (e) => {
+    if (e.key === "Enter"){ e.preventDefault(); document.execCommand("insertLineBreak"); }
+  });
+  selectEl(el);
+  startEdit(t);
+}
+function startEdit(t){
+  t.contentEditable = "true"; t.focus();
+  const r = document.createRange(); r.selectNodeContents(t);
+  const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+}
+
+/* ===== 드래그 이동 ===== */
+function makeDraggable(el){
+  el.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".ctrl") || e.target.classList.contains("grip")) return;
+    const t = el.querySelector(".text-edit");
+    if (t && t.isContentEditable) return;        // 편집 중이면 텍스트 선택 허용
+    e.preventDefault();
+    selectEl(el);
+    const overlay = el.parentElement;
+    const oRect = overlay.getBoundingClientRect();
+    const eRect = el.getBoundingClientRect();
+    const offX = e.clientX - eRect.left, offY = e.clientY - eRect.top;
+    el.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      let nx = ev.clientX - oRect.left - offX;
+      let ny = ev.clientY - oRect.top  - offY;
+      nx = Math.max(0, Math.min(nx, overlay.clientWidth  - el.offsetWidth));
+      ny = Math.max(0, Math.min(ny, overlay.clientHeight - el.offsetHeight));
+      el.style.left = nx + "px"; el.style.top = ny + "px";
+    };
+    const up = () => { el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  });
+}
+
+/* ===== 크기 조절 (이미지) ===== */
+function makeResizable(el, grip){
+  grip.addEventListener("pointerdown", (e) => {
+    e.stopPropagation(); e.preventDefault();
+    selectEl(el);
+    const overlay = el.parentElement;
+    const startX = e.clientX, startW = el.offsetWidth;
+    const aspect = el.__aspect || (el.offsetWidth / el.offsetHeight);
+    grip.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      let nw = startW + (ev.clientX - startX);
+      nw = Math.max(30, Math.min(nw, overlay.clientWidth - el.offsetLeft));
+      el.style.width = nw + "px";
+      el.style.height = (nw / aspect) + "px";
+    };
+    const up = () => { grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+  });
+}
+
+/* ===== 텍스트 → PNG 래스터화 (한글 등 모든 글자 지원) ===== */
+function textToDataUrl(el){
+  const t = el.querySelector(".text-edit");
+  const cs = getComputedStyle(t);
+  const fs = parseFloat(cs.fontSize);
+  const text = t.innerText.replace(/\n$/, "");
+  if (!text.trim()) return null;
+  const w = el.offsetWidth, h = el.offsetHeight;
+  const ss = Math.max(3, Math.ceil((window.devicePixelRatio || 1) * 2));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(w * ss));
+  c.height = Math.max(1, Math.round(h * ss));
+  const ctx = c.getContext("2d");
+  ctx.scale(ss, ss);
+  ctx.textBaseline = "top";
+  ctx.fillStyle = cs.color;
+  ctx.font = `${cs.fontWeight} ${fs}px ${cs.fontFamily}`;
+  const padL = parseFloat(cs.paddingLeft) || 0, padT = parseFloat(cs.paddingTop) || 0;
+  const lh = fs * 1.3;
+  text.split("\n").forEach((line, i) => ctx.fillText(line, padL, padT + i * lh));
+  return c.toDataURL("image/png");
+}
+
+/* ===== 저장(다운로드) ===== */
+async function exportPdf(){
+  if (!state || state.kind !== "pdf") return;
+  if (!state.elements.length){ toast("추가한 항목이 없어요. 그래도 다운로드합니다.", 1800); }
+  showLoading("PDF 생성 중…");
+  try {
+    const { PDFDocument } = PDFLib;
+    const pdfDoc = await PDFDocument.load(state.pdfBytes, { ignoreEncryption: true });
+    const pages = pdfDoc.getPages();
+
+    for (const { el, pageIndex, kind } of state.elements){
+      const p = state.pages[pageIndex];
+      const page = pages[pageIndex];
+      const dataUrl = (kind === "signature") ? el.__dataUrl : textToDataUrl(el);
+      if (!dataUrl) continue;
+
+      const scale = p.scale;
+      const xPt = el.offsetLeft / scale;
+      const wPt = el.offsetWidth / scale;
+      const hPt = el.offsetHeight / scale;
+      const yPt = p.ptH - (el.offsetTop / scale) - hPt;   // PDF는 좌하단이 원점
+
+      const png = await pdfDoc.embedPng(dataUrl);
+      page.drawImage(png, { x: xPt, y: yPt, width: wPt, height: hPt });
+    }
+
+    const bytes = await pdfDoc.save();
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = state.fileName.replace(/\.pdf$/i, "") + "_signed.pdf";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast("다운로드 완료 ✓");
+  } catch (e){
+    console.error(e);
+    toast("저장 중 오류가 발생했습니다.", 3000);
+  } finally {
+    hideLoading();
+  }
+}
+
+/* ===== 서명 패드 ===== */
+let padCtx, padDpr, padDrawing = false, padDirty = false;
+function openSig(){
+  byId("sigModal").hidden = false;
+  const lr = byId("lastSigRow");
+  if (lastSig){ lr.hidden = false; byId("lastSigThumb").src = lastSig.dataUrl; }
+  else lr.hidden = true;
+  const pad = byId("sigPad");
+  padDpr = window.devicePixelRatio || 1;
+  const rect = pad.getBoundingClientRect();
+  pad.width = Math.round(rect.width * padDpr);
+  pad.height = Math.round(rect.height * padDpr);
+  padCtx = pad.getContext("2d");
+  padCtx.scale(padDpr, padDpr);
+  padCtx.lineWidth = 2.6; padCtx.lineCap = "round"; padCtx.lineJoin = "round";
+  padCtx.strokeStyle = "#111";
+  padDirty = false;
+}
+function closeSig(){ byId("sigModal").hidden = true; }
+function padPos(e){ const r = e.target.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+function initPad(){
+  const pad = byId("sigPad");
+  pad.addEventListener("pointerdown", (e) => {
+    padDrawing = true; padDirty = true; pad.setPointerCapture(e.pointerId);
+    const { x, y } = padPos(e); padCtx.beginPath(); padCtx.moveTo(x, y);
+  });
+  pad.addEventListener("pointermove", (e) => {
+    if (!padDrawing) return; const { x, y } = padPos(e); padCtx.lineTo(x, y); padCtx.stroke();
+  });
+  const stop = () => { padDrawing = false; };
+  pad.addEventListener("pointerup", stop);
+  pad.addEventListener("pointerleave", stop);
+}
+function clearPad(){ const pad = byId("sigPad"); padCtx.clearRect(0,0,pad.width,pad.height); padDirty = false; }
+
+/* 서명 캔버스의 빈 여백을 잘라낸다 */
+function trimCanvas(src){
+  const W = src.width, H = src.height;
+  const data = src.getContext("2d").getImageData(0,0,W,H).data;
+  let minX=W, minY=H, maxX=0, maxY=0, found=false;
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++){
+    if (data[(y*W+x)*4+3] > 8){ found=true;
+      if (x<minX)minX=x; if (x>maxX)maxX=x; if (y<minY)minY=y; if (y>maxY)maxY=y; }
+  }
+  if (!found) return null;
+  const pad = 8;
+  minX=Math.max(0,minX-pad); minY=Math.max(0,minY-pad);
+  maxX=Math.min(W-1,maxX+pad); maxY=Math.min(H-1,maxY+pad);
+  const w=maxX-minX+1, h=maxY-minY+1;
+  const out = document.createElement("canvas"); out.width=w; out.height=h;
+  out.getContext("2d").drawImage(src, minX,minY,w,h, 0,0,w,h);
+  return { dataUrl: out.toDataURL("image/png"), aspect: w/h };
+}
+
+/* 업로드한 이미지를 서명으로: 흰 배경 제거 후 여백 잘라내기 */
+function imageToSignature(img){
+  const maxDim = 1000;
+  let w = img.naturalWidth, h = img.naturalHeight;
+  if (!w || !h) return null;
+  const sc = Math.min(1, maxDim / Math.max(w, h));
+  w = Math.max(1, Math.round(w * sc)); h = Math.max(1, Math.round(h * sc));
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const ctx = c.getContext("2d");
+  ctx.drawImage(img, 0, 0, w, h);
+  const id = ctx.getImageData(0, 0, w, h); const d = id.data;
+  for (let i = 0; i < d.length; i += 4){              // 흰 배경 → 투명
+    if (d[i] > 235 && d[i+1] > 235 && d[i+2] > 235) d[i+3] = 0;
+  }
+  ctx.putImageData(id, 0, 0);
+  return trimCanvas(c);
+}
+
+function placeSignature(dataUrl, aspect){
+  lastSig = { dataUrl, aspect };
+  closeSig();
+  addImageElement(dataUrl, aspect, currentPageIndex());
+}
+
+function insertSig(){
+  if (!padDirty){ toast("먼저 서명을 그려주세요."); return; }
+  const trimmed = trimCanvas(byId("sigPad"));
+  if (!trimmed){ toast("서명이 비어 있어요."); return; }
+  placeSignature(trimmed.dataUrl, trimmed.aspect);
+}
+
+/* ===== 오피스 미리보기 (보기 전용) ===== */
+async function loadOffice(file, ext){
+  showLoading("여는 중…");
+  const doc = makeDoc("office", file.name);
+  try {
+    setActiveDoc(doc.id);
+    refreshChrome();
+    const host = doc.el; host.innerHTML = ""; host.scrollTop = 0;
+    if (ext === "docx")      await renderDocx(file, host);
+    else if (ext === "pptx") await renderPptx(file, host);
+    else                     await renderXlsx(file, host);   // xlsx / xls / csv
+  } catch (e){
+    if (!(e && e.message === "cancelled")){ console.error(e); toast("파일을 여는 중 오류가 발생했습니다.", 3000); }
+    closeDoc(doc.id);
+  } finally {
+    hideLoading();
+  }
+}
+
+async function renderDocx(file, host){
+  if (typeof docx === "undefined"){ toast("Word 뷰어 로드 실패"); return; }
+  let data = file;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (looksEncryptedOffice(bytes)){
+    const dec = await promptAndDecrypt(bytes, "docx");
+    if (!dec) throw new Error("cancelled");
+    data = dec;                                   // 복호화된 Uint8Array
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "docx-host";
+  host.appendChild(wrap);
+  await docx.renderAsync(data, wrap, null, {
+    className: "docx", inWrapper: true, breakPages: true, useBase64URL: true,
+  });
+}
+
+/* CFB(OLE2) + EncryptionInfo 스트림 → 열기 암호로 암호화된 오피스 파일인지 판별 */
+function looksEncryptedOffice(bytes){
+  if (bytes.length < 16) return false;
+  if (!(bytes[0]===0xD0 && bytes[1]===0xCF && bytes[2]===0x11 && bytes[3]===0xE0)) return false;
+  const needle = "EncryptionInfo";              // CFB 디렉터리에 UTF-16LE 로 저장됨
+  const end = bytes.length - needle.length * 2;
+  outer: for (let i = 0; i < end; i++){
+    for (let j = 0; j < needle.length; j++){
+      if (bytes[i + j*2] !== needle.charCodeAt(j) || bytes[i + j*2 + 1] !== 0) continue outer;
+    }
+    return true;
+  }
+  return false;
+}
+
+/* 앱 내부 암호 입력 모달 → Promise<string|null> (취소 시 null) */
+function askPassword(message){
+  return new Promise((resolve) => {
+    const modal = byId("pwModal"), input = byId("pwInput");
+    byId("pwSub").textContent = message || "암호로 보호된 파일입니다. 암호를 입력하세요.";
+    input.value = "";
+    modal.hidden = false;
+    setTimeout(() => input.focus(), 40);
+    const cleanup = () => {
+      modal.hidden = true;
+      byId("pwOk").onclick = null; byId("pwCancel").onclick = null; input.onkeydown = null;
+    };
+    const ok = () => { const v = input.value; cleanup(); resolve(v); };
+    const cancel = () => { cleanup(); resolve(null); };
+    byId("pwOk").onclick = ok;
+    byId("pwCancel").onclick = cancel;
+    input.onkeydown = (e) => {
+      if (e.key === "Enter"){ e.preventDefault(); ok(); }
+      else if (e.key === "Escape"){ e.preventDefault(); cancel(); }
+    };
+  });
+}
+
+/* 암호 입력 → 복호화 → 복호화된 오피스 바이트(Uint8Array) 반환 (취소/실패 시 null) */
+async function promptAndDecrypt(bytes, kind){
+  hideLoading();
+  const what = kind === "docx" ? "워드 문서" : kind === "pptx" ? "파워포인트" : "엑셀";
+  for (let attempt = 0; attempt < 5; attempt++){
+    const msg = attempt === 0
+      ? `🔒 암호로 보호된 ${what}입니다. 암호를 입력하세요.`
+      : "암호가 올바르지 않습니다. 다시 입력해 주세요.";
+    const pw = await askPassword(msg);
+    if (pw === null) return null;                // 취소
+    try {
+      showLoading("암호 해제 중…");
+      const dec = await decryptOffice(bytes, pw, kind);
+      hideLoading();
+      if (dec) return dec;
+    } catch (e){
+      hideLoading();
+      const m = e && e.message;
+      if (m === "unsupported-encryption"){
+        toast("이 암호화 방식은 아직 지원하지 않아요 (구형 Standard 방식).", 4000);
+        return null;
+      }
+      if (m !== "wrong-password") console.warn("복호화 오류:", m);
+      // wrong-password 등은 루프 → 재입력
+    }
+  }
+  toast("암호 해제에 실패했습니다.", 3000);
+  return null;
+}
+
+/* 범용 복호화: office-decrypt.js(crypto-js 기반, Agile) — xlsx/docx/pptx 공통 */
+async function decryptOffice(bytes, password /*, kind */){
+  if (typeof OfficeDecrypt === "undefined" || !OfficeDecrypt.decrypt) throw new Error("복호화 모듈 없음");
+  return OfficeDecrypt.decrypt(bytes, password);   // Uint8Array 반환(동기)
+}
+
+async function renderXlsx(file, host){
+  if (typeof XLSX === "undefined"){ toast("Excel 뷰어 로드 실패"); return; }
+  let bytes = new Uint8Array(await file.arrayBuffer());
+  if (looksEncryptedOffice(bytes)){
+    const dec = await promptAndDecrypt(bytes, "xlsx");
+    if (!dec) throw new Error("cancelled");             // 취소/실패 → 드롭존
+    bytes = dec;
+  }
+  const wb = XLSX.read(bytes, { type: "array" });
+  if (!wb.SheetNames.length){ host.textContent = "시트가 없습니다."; return; }
+  const tabs = document.createElement("div"); tabs.className = "xlsx-tabs";
+  const sheet = document.createElement("div"); sheet.className = "xlsx-sheet";
+  host.appendChild(tabs); host.appendChild(sheet);
+  const show = (name, btn) => {
+    sheet.innerHTML = XLSX.utils.sheet_to_html(wb.Sheets[name], { editable: false });
+    [...tabs.children].forEach(c => c.classList.remove("active"));
+    btn.classList.add("active"); sheet.scrollTop = 0;
+  };
+  wb.SheetNames.forEach((name, i) => {
+    const b = document.createElement("button");
+    b.className = "xlsx-tab"; b.textContent = name;
+    b.onclick = () => show(name, b);
+    tabs.appendChild(b);
+    if (i === 0) show(name, b);
+  });
+  if (wb.SheetNames.length === 1) tabs.style.display = "none";
+}
+
+async function renderPptx(file, host){
+  if (typeof window.jQuery === "undefined" || !window.jQuery.fn || !window.jQuery.fn.pptxToHtml){
+    toast("PowerPoint 뷰어 로드 실패"); return;
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let pptxBytes = bytes;
+  if (looksEncryptedOffice(bytes)){
+    const dec = await promptAndDecrypt(bytes, "pptx");
+    if (!dec) throw new Error("cancelled");
+    pptxBytes = dec;
+  }
+  await new Promise((resolve, reject) => {
+    const div = document.createElement("div");
+    div.id = "pptxHost_" + Date.now();
+    div.className = "pptx-host";
+    host.appendChild(div);
+    const url = "memory-pptx-" + Date.now() + "-" + Math.random().toString(36).slice(2) + ".pptx";
+    const pptxData = normalizeArrayBuffer(pptxBytes);
+    const originalGetBinaryContent = window.JSZipUtils && window.JSZipUtils.getBinaryContent;
+    if (!originalGetBinaryContent) throw new Error("pptx-loader-missing");
+    window.JSZipUtils.getBinaryContent = function(requestUrl, options){
+      if (requestUrl === url){
+        const callback = (typeof options === "function") ? options : options && options.callback;
+        if (callback) setTimeout(() => callback(null, pptxData), 0);
+        return Promise.resolve(pptxData);
+      }
+      return originalGetBinaryContent.apply(this, arguments);
+    };
+    let settled = false;
+    const restore = () => {
+      if (window.JSZipUtils.getBinaryContent !== originalGetBinaryContent){
+        window.JSZipUtils.getBinaryContent = originalGetBinaryContent;
+      }
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      restore();
+      window.removeEventListener("error", onError);
+      resolve();
+    };
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      restore();
+      window.removeEventListener("error", onError);
+      reject(err);
+    };
+    const onError = (event) => fail(event.error || new Error(event.message || "pptx-render-error"));
+    window.addEventListener("error", onError);
+    try {
+      window.jQuery("#" + div.id).pptxToHtml({
+        pptxFileUrl: url, slidesScale: "", slideMode: false, keyBoardShortCut: false,
+      });
+    } catch (e){ fail(e); return; }
+    waitForPptxRender(div).then(finish, fail).finally(() => {
+      window.removeEventListener("error", onError);
+    });
+  });
+}
+
+function normalizeArrayBuffer(bytes){
+  if (bytes instanceof ArrayBuffer) return bytes.slice(0);
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+}
+
+function waitForPptxRender(div){
+  return new Promise((resolve, reject) => {
+    const ready = () => div.querySelector(".slide, .slide-wrapper");
+    if (ready()) { resolve(); return; }
+    const observer = new MutationObserver(() => {
+      if (ready()) {
+        cleanup();
+        resolve();
+      }
+    });
+    const cleanup = () => {
+      clearTimeout(timer);
+      observer.disconnect();
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("pptx-render-timeout"));
+    }, 45000);
+    observer.observe(div, { childList: true, subtree: true });
+  });
+}
+
+/* ===== 이미지 미리보기 (보기 전용 + 줌) ===== */
+async function loadImage(file){
+  showLoading("여는 중…");
+  const doc = makeDoc("image", file.name);
+  try {
+    setActiveDoc(doc.id);
+    refreshChrome();
+    const host = doc.el; host.innerHTML = ""; host.scrollTop = 0;
+    await renderImage(file, host);
+  } catch (e){
+    console.error(e);
+    toast("이미지를 여는 중 오류가 발생했습니다.", 3000);
+    closeDoc(doc.id);
+  } finally {
+    hideLoading();
+  }
+}
+
+function renderImage(file, host){
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const wrap = document.createElement("div"); wrap.className = "img-host";
+    const img = document.createElement("img"); img.className = "img-view"; img.alt = file.name;
+    wrap.appendChild(img); host.appendChild(wrap);
+
+    const bar = document.createElement("div"); bar.className = "img-zoom";
+    const label = document.createElement("span");
+    let zoom = null; // null = 맞춤(fit)
+    const apply = () => {
+      if (zoom === null){
+        img.style.width = ""; img.style.maxWidth = "100%";
+        img.style.maxHeight = "calc(100vh - 150px)"; img.style.cursor = "zoom-in";
+      } else {
+        img.style.maxWidth = "none"; img.style.maxHeight = "none";
+        img.style.width = (img.naturalWidth * zoom) + "px"; img.style.cursor = "zoom-out";
+      }
+      label.textContent = (zoom === null) ? "맞춤" : Math.round(zoom * 100) + "%";
+    };
+    const mk = (t, fn) => { const b = document.createElement("button"); b.textContent = t; b.onclick = fn; return b; };
+    bar.append(
+      mk("−", () => { zoom = Math.max(0.1, (zoom === null ? 1 : zoom) - 0.25); apply(); }),
+      label,
+      mk("+", () => { zoom = Math.min(8, (zoom === null ? 1 : zoom) + 0.25); apply(); }),
+      mk("⤢", () => { zoom = null; apply(); })
+    );
+    img.onclick = () => { zoom = (zoom === null) ? 1 : null; apply(); };
+    host.appendChild(bar);
+
+    img.onload = () => { URL.revokeObjectURL(url); apply(); resolve(); };  // 로드 후 URL 해제(표시는 유지)
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("이미지 로드 실패")); };
+    img.src = url;
+  });
+}
+
+/* ===== 이벤트 연결 ===== */
+function wire(){
+  // 드롭존
+  const fileInput = byId("fileInput");
+  byId("dzInner").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", (e) => { const fs = e.target.files; if (fs.length){ queueFiles(fs); e.target.value = ""; } });
+  ["dragenter","dragover"].forEach(ev => dropzone.addEventListener(ev, (e) => {
+    e.preventDefault(); dropzone.classList.add("drag");
+  }));
+  ["dragleave","drop"].forEach(ev => dropzone.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation(); dropzone.classList.remove("drag");
+    if (ev === "drop" && e.dataTransfer.files.length) queueFiles(e.dataTransfer.files);
+  }));
+
+  // 창 전체로 파일이 떨어져 브라우저가 이동하는 것 방지 + 파일 처리는 여기 한 곳에서만
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.files.length) queueFiles(e.dataTransfer.files);   // 드롭존/콘텐츠 어디에 떨궈도 새 탭으로 추가
+  });
+
+  // 툴바
+  byId("btnSign").onclick = openSig;
+  byId("btnText").onclick = () => addTextElement("text", { fontSize: 18 });
+  byId("btnDate").onclick = () => {
+    const d = new Date();
+    const s = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+    addTextElement("date", { fontSize: 18, text: s });
+  };
+  byId("btnCheck").onclick = () => addTextElement("check", { fontSize: 30, color: "#16a34a", bold: true, text: "✓" });
+  byId("btnDownload").onclick = exportPdf;
+  byId("btnPrint").onclick = () => window.print();
+  byId("sbAdd").onclick = () => byId("fileInput").click();
+
+  // 서명 모달
+  byId("sigClear").onclick = clearPad;
+  byId("sigCancel").onclick = closeSig;
+  byId("sigInsert").onclick = insertSig;
+  byId("sigReuse").onclick = () => { if (lastSig) placeSignature(lastSig.dataUrl, lastSig.aspect); };
+  byId("sigUpload").onclick = () => byId("sigFile").click();
+  byId("sigFile").addEventListener("change", (e) => {
+    const f = e.target.files[0]; e.target.value = "";
+    if (!f) return;
+    const img = new Image();
+    const url = URL.createObjectURL(f);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const res = imageToSignature(img);
+      if (!res){ toast("이미지에서 서명을 찾지 못했어요."); return; }
+      placeSignature(res.dataUrl, res.aspect);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); toast("이미지를 불러오지 못했습니다."); };
+    img.src = url;
+  });
+  initPad();
+
+  // Delete 키로 선택 요소 삭제 (편집 중이 아닐 때만)
+  window.addEventListener("keydown", (e) => {
+    if ((e.key === "Delete" || e.key === "Backspace") && state && state.kind === "pdf" && state.selected){
+      const ae = document.activeElement;
+      if (ae && ae.isContentEditable) return;
+      e.preventDefault(); removeEl(state.selected);
+    }
+  });
+
+  if (typeof pdfjsLib === "undefined" || typeof PDFLib === "undefined"){
+    toast("라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인하세요.", 5000);
+  }
+}
+wire();
+</script>
+</body>
+</html>
