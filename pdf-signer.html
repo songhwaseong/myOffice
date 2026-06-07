@@ -139,6 +139,27 @@
   .xlsx-sheet table{border-collapse:collapse;font-size:13px;width:100%}
   .xlsx-sheet td,.xlsx-sheet th{border:1px solid #d7dee8;padding:5px 9px;white-space:nowrap;color:#1e293b}
   .xlsx-sheet tr:first-child td{background:#f1f5f9;font-weight:600;position:sticky;top:0}
+  .md-host{max-width:920px;margin:0 auto;background:#fff;border-radius:8px;padding:34px 42px;
+    box-shadow:0 4px 18px rgba(15,23,42,.12);line-height:1.7;color:#1e293b}
+  .md-host h1,.md-host h2,.md-host h3,.md-host h4{line-height:1.25;margin:1.2em 0 .55em}
+  .md-host h1:first-child,.md-host h2:first-child,.md-host h3:first-child{margin-top:0}
+  .md-host h1{font-size:30px;border-bottom:1px solid var(--border);padding-bottom:10px}
+  .md-host h2{font-size:24px;border-bottom:1px solid var(--border);padding-bottom:8px}
+  .md-host h3{font-size:19px}.md-host h4{font-size:16px}
+  .md-host p{margin:0 0 1em}.md-host ul,.md-host ol{margin:0 0 1em 1.4em}
+  .md-host table{width:100%;border-collapse:collapse;margin:0 0 1em}
+  .md-host th,.md-host td{border:1px solid #d7dee8;padding:7px 10px;text-align:left;vertical-align:top}
+  .md-host th{background:#f1f5f9;font-weight:700}
+  .md-host blockquote{margin:0 0 1em;padding:2px 0 2px 14px;border-left:4px solid #cbd5e1;color:#475569}
+  .md-host pre{margin:0 0 1em;padding:14px 16px;background:#0f172a;color:#e2e8f0;border-radius:8px;overflow:auto}
+  .md-host code{font-family:Consolas,"Courier New",monospace;font-size:.92em}
+  .md-host :not(pre)>code{background:#f1f5f9;color:#be123c;padding:2px 5px;border-radius:5px}
+  .md-host a{color:var(--accent);text-decoration:none}.md-host a:hover{text-decoration:underline}
+  .md-host hr{border:0;border-top:1px solid var(--border);margin:24px 0}
+  .txt-host{max-width:920px;margin:0 auto;background:#fff;border-radius:8px;padding:30px 34px;
+    box-shadow:0 4px 18px rgba(15,23,42,.12);color:#1e293b}
+  .txt-host pre{font-family:Consolas,"Courier New",monospace;font-size:14px;line-height:1.65;
+    white-space:pre-wrap;word-break:break-word}
   .img-host{min-height:100%;display:flex;align-items:flex-start;justify-content:center}
   .img-view{display:block;background:#fff;box-shadow:0 4px 18px rgba(15,23,42,.18);border-radius:4px;
     max-width:100%;max-height:calc(100vh - 150px);cursor:zoom-in}
@@ -153,7 +174,7 @@
     header,.hint,.toast,#dropzone,#tools,#officeTools,#loading,.img-zoom,#sidebar{display:none!important}
     main{position:static;overflow:visible}
     .office,.viewer{position:static;overflow:visible;padding:0;background:#fff}
-    .page,.docx-host,.pptx-host,.xlsx-sheet{box-shadow:none!important}
+    .page,.docx-host,.pptx-host,.xlsx-sheet,.md-host,.txt-host{box-shadow:none!important}
   }
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/meshesha/PPTXjs@master/css/pptxjs.css">
@@ -192,7 +213,7 @@
         <p>PDF · Word · Excel · PowerPoint · 이미지 &nbsp;|&nbsp; 또는 클릭해서 선택</p>
         <div class="dz-note">🔒 모든 처리는 이 브라우저 안에서만 이뤄집니다. 파일은 외부로 전송되지 않아요.<br>
           ✍️ 서명·편집은 PDF에서, 나머지는 미리보기로 · <b>여러 개를 한꺼번에 열 수 있어요</b></div>
-        <input type="file" id="fileInput" accept=".pdf,.docx,.xlsx,.xls,.csv,.pptx,image/*" multiple hidden>
+        <input type="file" id="fileInput" accept=".pdf,.docx,.xlsx,.xls,.csv,.pptx,.md,.markdown,.txt,image/*" multiple hidden>
       </div>
     </div>
   </div>
@@ -376,6 +397,8 @@ function iconFor(kind, name){
   if (kind === "pdf") return "📄";
   if (kind === "image") return "🖼";
   const ext = (name.split(".").pop() || "").toLowerCase();
+  if (ext === "md" || ext === "markdown") return "MD";
+  if (ext === "txt") return "TXT";
   if (ext === "docx") return "📝";
   if (ext === "pptx") return "📑";
   return "📊";
@@ -409,7 +432,7 @@ async function handleFiles(files){
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     try {
       if (ext === "pdf") await loadPdf(await file.arrayBuffer(), file.name);
-      else if (["docx","xlsx","xls","csv","pptx"].includes(ext)) await loadOffice(file, ext);
+      else if (["docx","xlsx","xls","csv","pptx","md","markdown","txt"].includes(ext)) await loadOffice(file, ext);
       else if (IMG_EXTS.includes(ext)) await loadImage(file);
       else toast("지원하지 않는 형식: " + file.name, 2500);
     } catch (e){ console.error(e); }
@@ -822,6 +845,8 @@ async function loadOffice(file, ext){
     const host = doc.el; host.innerHTML = ""; host.scrollTop = 0;
     if (ext === "docx")      await renderDocx(file, host);
     else if (ext === "pptx") await renderPptx(file, host);
+    else if (ext === "md" || ext === "markdown") await renderMarkdown(file, host);
+    else if (ext === "txt")  await renderText(file, host);
     else                     await renderXlsx(file, host);   // xlsx / xls / csv
   } catch (e){
     if (!(e && e.message === "cancelled")){ console.error(e); toast("파일을 여는 중 오류가 발생했습니다.", 3000); }
@@ -829,6 +854,154 @@ async function loadOffice(file, ext){
   } finally {
     hideLoading();
   }
+}
+
+async function renderMarkdown(file, host){
+  const wrap = document.createElement("article");
+  wrap.className = "md-host";
+  wrap.innerHTML = markdownToHtml(await file.text());
+  host.appendChild(wrap);
+}
+
+async function renderText(file, host){
+  const wrap = document.createElement("article");
+  const pre = document.createElement("pre");
+  wrap.className = "txt-host";
+  pre.textContent = await file.text();
+  wrap.appendChild(pre);
+  host.appendChild(wrap);
+}
+
+function escapeHtml(value){
+  return String(value).replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[ch]);
+}
+
+function escapeAttr(value){
+  return escapeHtml(value).replace(/`/g, "&#96;");
+}
+
+function safeLink(url){
+  const trimmed = String(url || "").trim();
+  return /^(https?:|mailto:)/i.test(trimmed) ? trimmed : "";
+}
+
+function inlineMarkdown(text){
+  const code = [];
+  let out = String(text).replace(/`([^`]+)`/g, (_, value) => {
+    code.push(`<code>${escapeHtml(value)}</code>`);
+    return `\u0000${code.length - 1}\u0000`;
+  });
+  out = escapeHtml(out);
+  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => {
+    const href = safeLink(url);
+    if (!href) return label;
+    return `<a href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
+  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+  out = out.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  out = out.replace(/_([^_]+)_/g, "<em>$1</em>");
+  return out.replace(/\u0000(\d+)\u0000/g, (_, i) => code[Number(i)] || "");
+}
+
+function splitTableRow(line){
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cell => cell.trim());
+}
+
+function isTableSeparator(line){
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+}
+
+function markdownToHtml(markdown){
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  const html = [];
+  let i = 0;
+
+  while (i < lines.length){
+    const line = lines[i];
+    if (!line.trim()){ i++; continue; }
+
+    const fence = line.match(/^\s*(```|~~~)\s*([\w-]*)\s*$/);
+    if (fence){
+      const marker = fence[1];
+      const lang = fence[2] ? ` class="language-${escapeAttr(fence[2])}"` : "";
+      const buf = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith(marker)){
+        buf.push(lines[i++]);
+      }
+      if (i < lines.length) i++;
+      html.push(`<pre><code${lang}>${escapeHtml(buf.join("\n"))}</code></pre>`);
+      continue;
+    }
+
+    if (i + 1 < lines.length && line.includes("|") && isTableSeparator(lines[i + 1])){
+      const head = splitTableRow(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()){
+        rows.push(splitTableRow(lines[i++]));
+      }
+      html.push("<table><thead><tr>" + head.map(c => `<th>${inlineMarkdown(c)}</th>`).join("") + "</tr></thead><tbody>" +
+        rows.map(row => "<tr>" + row.map(c => `<td>${inlineMarkdown(c)}</td>`).join("") + "</tr>").join("") +
+        "</tbody></table>");
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*$/);
+    if (heading){
+      const level = heading[1].length;
+      html.push(`<h${level}>${inlineMarkdown(heading[2])}</h${level}>`);
+      i++;
+      continue;
+    }
+
+    if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)){
+      html.push("<hr>");
+      i++;
+      continue;
+    }
+
+    if (/^\s*>\s?/.test(line)){
+      const buf = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])){
+        buf.push(lines[i].replace(/^\s*>\s?/, ""));
+        i++;
+      }
+      html.push(`<blockquote>${markdownToHtml(buf.join("\n"))}</blockquote>`);
+      continue;
+    }
+
+    const unordered = line.match(/^\s*[-*+]\s+(.+)$/);
+    const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (unordered || ordered){
+      const tag = ordered ? "ol" : "ul";
+      const items = [];
+      const rx = ordered ? /^\s*\d+[.)]\s+(.+)$/ : /^\s*[-*+]\s+(.+)$/;
+      while (i < lines.length){
+        const item = lines[i].match(rx);
+        if (!item) break;
+        items.push(`<li>${inlineMarkdown(item[1])}</li>`);
+        i++;
+      }
+      html.push(`<${tag}>${items.join("")}</${tag}>`);
+      continue;
+    }
+
+    const paragraph = [line.trim()];
+    i++;
+    while (i < lines.length && lines[i].trim() && !/^\s*(```|~~~)/.test(lines[i]) &&
+      !/^(#{1,6})\s+/.test(lines[i]) && !/^\s*([-*+]|\d+[.)])\s+/.test(lines[i]) &&
+      !/^\s*>\s?/.test(lines[i]) && !(i + 1 < lines.length && lines[i].includes("|") && isTableSeparator(lines[i + 1]))){
+      paragraph.push(lines[i].trim());
+      i++;
+    }
+    html.push(`<p>${inlineMarkdown(paragraph.join(" "))}</p>`);
+  }
+
+  return html.join("\n") || "<p></p>";
 }
 
 async function renderDocx(file, host){
