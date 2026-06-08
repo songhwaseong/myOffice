@@ -71,6 +71,13 @@
   .sb-add{margin:8px;padding:10px;border:1px dashed rgba(255,255,255,.25);border-radius:8px;
     background:transparent;color:#cbd5e1;cursor:pointer;font:inherit;font-size:13px}
   .sb-add:hover{background:rgba(255,255,255,.08);border-color:var(--accent)}
+  .sb-add#sbAddFolder{margin-top:0}
+  .dz-folder{margin-top:12px;padding:9px 16px;border:1px solid var(--accent);background:transparent;
+    color:var(--accent);border-radius:8px;font:inherit;font-size:14px;cursor:pointer}
+  .dz-folder:hover{background:var(--accent);color:#fff}
+  #sbResizer{flex:0 0 6px;cursor:col-resize;background:var(--sidebar);position:relative}
+  #sbResizer::before{content:"";position:absolute;top:0;bottom:0;left:2px;width:2px;background:rgba(255,255,255,.12)}
+  #sbResizer:hover::before,#sbResizer.dragging::before{background:var(--accent);width:3px;left:1.5px}
   #content{position:relative;flex:1;min-width:0;overflow:hidden}
 
   .dropzone{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px}
@@ -83,10 +90,14 @@
   .dz-note{margin-top:18px;font-size:12px;color:var(--muted)}
 
   .viewer{position:absolute;inset:0;overflow:auto;padding:24px 12px 80px;isolation:isolate}
-  .page{position:relative;margin:0 auto 22px;background:#fff;box-shadow:0 4px 18px rgba(15,23,42,.14);
-    border-radius:4px}
+  .page-frame{margin:0 auto 22px}            /* 줌 시 레이아웃 공간 확보용 래퍼 */
+  .page{position:relative;margin:0;background:#fff;box-shadow:0 4px 18px rgba(15,23,42,.14);
+    border-radius:4px;transform-origin:top left}
   .page canvas{display:block;border-radius:4px}
   .overlay{position:absolute;inset:0}
+  .zoom-ctl{display:flex;align-items:center;gap:4px}
+  .zoom-ctl button{min-width:34px;text-align:center;padding:7px 10px}
+  #zoomLabel{min-width:52px}
 
   /* ---- 배치된 요소 ---- */
   .placed{position:absolute;cursor:move;touch-action:none;user-select:none}
@@ -155,6 +166,7 @@
     text-overflow:ellipsis;white-space:nowrap}
   .office{position:absolute;inset:0;overflow:auto;background:var(--viewer);padding:24px 12px 60px;isolation:isolate}
   .docx-host{margin:0 auto}
+  .hwp-host{margin:0 auto}
   .pptx-host{margin:0 auto;max-width:1080px}
   .xlsx-tabs{display:flex;gap:6px;flex-wrap:wrap;max-width:1080px;margin:0 auto 12px}
   .xlsx-tab{font:inherit;font-size:13px;padding:7px 14px;border:1px solid var(--border);
@@ -216,6 +228,11 @@
     <button id="btnDate">📅 날짜</button>
     <button id="btnCheck">✓ 체크</button>
     <span class="spacer"></span>
+    <span class="zoom-ctl">
+      <button id="zoomOut" type="button" title="축소 (Ctrl+-)">－</button>
+      <button id="zoomLabel" type="button" title="원래대로(맞춤)">100%</button>
+      <button id="zoomIn" type="button" title="확대 (Ctrl++)">＋</button>
+    </span>
     <button id="btnDownload" class="primary">⬇️ 다운로드</button>
   </div>
   <div class="tools" id="officeTools" hidden>
@@ -231,16 +248,20 @@
     <div class="sb-title">열린 파일</div>
     <div class="sb-list" id="sbList"></div>
     <button class="sb-add" id="sbAdd">＋ 파일 추가</button>
+    <button class="sb-add" id="sbAddFolder">📁 폴더 열기</button>
   </div>
+  <div id="sbResizer" hidden title="드래그해서 사이드바 너비 조절"></div>
   <div id="content">
     <div class="dropzone" id="dropzone">
       <div class="dz-inner" id="dzInner">
         <div class="dz-icon">📥</div>
         <h2>파일을 여기로 끌어다 놓으세요</h2>
         <p>PDF · Word · Excel · PowerPoint · 이미지 · 폴더 · ZIP &nbsp;|&nbsp; 또는 클릭해서 선택</p>
+        <button type="button" id="dzFolderBtn" class="dz-folder">📁 폴더 열기</button>
         <div class="dz-note">🔒 모든 처리는 이 브라우저 안에서만 이뤄집니다. 파일은 외부로 전송되지 않아요.<br>
           ✍️ 서명·편집은 PDF에서, 나머지는 미리보기로 · <b>여러 개를 한꺼번에 열 수 있어요</b></div>
-        <input type="file" id="fileInput" accept=".pdf,.docx,.xlsx,.xls,.csv,.pptx,.md,.markdown,.txt,.zip,image/*" multiple hidden>
+        <input type="file" id="fileInput" accept=".pdf,.docx,.xlsx,.xls,.csv,.pptx,.hwp,.hwpx,.md,.markdown,.txt,.zip,image/*" multiple hidden>
+        <input type="file" id="folderInput" webkitdirectory multiple hidden>
       </div>
     </div>
   </div>
@@ -285,12 +306,28 @@
   </div>
 </div>
 
+<div class="modal" id="confirmModal" hidden>
+  <div class="modal-card" style="width:min(420px,96%)">
+    <h3>⚠️ 잠깐!</h3>
+    <div class="sub" id="confirmSub">계속하시겠어요?</div>
+    <div class="modal-actions">
+      <span class="spacer"></span>
+      <button class="btn" id="confirmCancel">취소</button>
+      <button class="btn primary" id="confirmOk">계속</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 <div class="loading" id="loading" hidden><div class="spinner"></div><p id="loadingMsg">처리 중…</p></div>
 <div class="hint" id="hint" hidden>요소를 끌어 위치 이동 · 더블클릭으로 텍스트 수정 · 모서리로 크기 조절 · Delete 키로 삭제</div>
 
-<!-- 오피스 미리보기 라이브러리 (순서 중요: jszip/jquery 가 먼저) -->
+<!-- 오피스 미리보기 라이브러리 (순서 중요) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+<!-- docx-preview 는 JSZip 3.x(loadAsync) 필요 → 먼저 v3 을 띄우고 docx-preview 가 이를 캡처하게 한다 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://unpkg.com/docx-preview@0.3.5/dist/docx-preview.min.js"></script>
+<!-- 이후 전역 JSZip 을 2.6.1 로 되돌린다 (PPTXjs/앱 repair 가 동기 new JSZip API 사용) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/2.6.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.min.js"></script>
 <script>
@@ -312,11 +349,12 @@ window.FileReaderJS = window.FileReaderJS || {
 </script>
 <script src="https://cdn.jsdelivr.net/gh/meshesha/PPTXjs@master/js/divs2slides.min.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/meshesha/PPTXjs@master/js/pptxjs.min.js"></script>
-<script src="https://unpkg.com/docx-preview@0.3.5/dist/docx-preview.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <!-- 오피스 열기암호 복호화 (Agile) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
 <script src="vendor/office-decrypt.js"></script>
+<!-- 한글(HWP 바이너리) 뷰어: hwp.js v0.0.3 (ESM→전역 변환본) -->
+<script src="vendor/hwp.global.js"></script>
 <!-- PDF 서명/편집 라이브러리 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
@@ -378,12 +416,19 @@ function showLoading(msg){ byId("loadingMsg").textContent = msg||"처리 중…"
 function hideLoading(){ byId("loading").hidden = true; }
 function updateLoading(msg){ if (msg) byId("loadingMsg").textContent = msg; }
 function yieldToBrowser(){ return new Promise(resolve => setTimeout(resolve, 0)); }
-const MAX_RENDER_DPR = 1.5;
+// PDF 렌더 슈퍼샘플링: 화면 픽셀의 최소 RENDER_SCALE 배로 그려 글자를 선명하게 한다.
+// (devicePixelRatio 가 1 이어도 2배로 렌더 → 다운스케일되며 또렷해짐). RENDER_CAP 으로 메모리 보호.
+const RENDER_SCALE = 3;
+const RENDER_CAP = 3;
+// PDF 기본 표시 크기 배수(맞춤 대비). 1.0 = 기본, 키우면 더 크게 열림.
+const FIT_SCALE = 1.0;
+// 페이지 최대 너비(px). 넓은 화면에서 이 값까지 커진다(너무 크면 가로 스크롤이 생기지 않게 창 너비로 제한됨).
+const FIT_MAX_W = 1200;
 
 /* ===== 문서 관리(사이드바/탭) ===== */
 const IMG_EXTS = ["png","jpg","jpeg","gif","webp","bmp","svg","avif","ico"];
 // ZIP 안에서 자동으로 열어줄 확장자(중첩 zip 포함)
-const ZIP_OPENABLE = ["pdf","docx","xlsx","xls","csv","pptx","md","markdown","txt","zip", ...IMG_EXTS];
+const ZIP_OPENABLE = ["pdf","docx","xlsx","xls","csv","pptx","hwp","hwpx","md","markdown","txt","zip", ...IMG_EXTS];
 // zip에서 꺼낸 파일은 MIME이 비어 있어 일부 형식(특히 SVG)이 미리보기에서 거부됨 → 확장자로 보강
 const ZIP_MIME = { svg:"image/svg+xml", png:"image/png", jpg:"image/jpeg", jpeg:"image/jpeg",
   gif:"image/gif", webp:"image/webp", bmp:"image/bmp", avif:"image/avif", ico:"image/x-icon", pdf:"application/pdf" };
@@ -403,7 +448,7 @@ function makeDoc(kind, name, options={}){
   el.hidden = true;
   byId("content").appendChild(el);
   const d = { id, nodeId: "doc:" + id, parentId: options.parentId || null, name, kind, el };
-  if (kind === "pdf"){ d.pdfBytes=null; d.fileName=name; d.pages=[]; d.elements=[]; d.selected=null; d.addCount=0; }
+  if (kind === "pdf"){ d.pdfBytes=null; d.fileName=name; d.pages=[]; d.elements=[]; d.selected=null; d.addCount=0; d.zoom=1; }
   docs.push(d);
   navNodes.push({ nodeId: d.nodeId, type: "doc", docId: id, parentId: d.parentId });
   return d;
@@ -420,6 +465,10 @@ function setActiveDoc(id){
   byId("officeTools").hidden = (d.kind === "pdf");
   if (d.kind === "pdf") byId("pdfName").textContent = d.name;
   else byId("officeName").textContent = d.name;
+  updateZoomLabel();
+  // 메모리 절약: 비활성 PDF 의 캔버스는 비우고, 활성 PDF 는 보이는 페이지를 다시 렌더한다.
+  docs.forEach(dd => { if (dd.kind === "pdf" && dd.id !== id && dd.pages) dd.pages.forEach(releasePageCanvas); });
+  if (d.kind === "pdf" && d.pages && d.pages.length) startLazyRender(d);
   renderSidebar();
 }
 
@@ -431,6 +480,8 @@ function closeDoc(id, options={}){
     if (!confirm(`'${d.name}' 에 추가한 서명/텍스트가 사라집니다. 닫을까요?`)) return;
   }
   d.closed = true;
+  if (d.io){ d.io.disconnect(); d.io = null; }                  // 지연 렌더 옵저버 해제
+  if (d.pdfjsDoc && d.pdfjsDoc.destroy){ try { d.pdfjsDoc.destroy(); } catch(e){} d.pdfjsDoc = null; }
   d.el.remove();
   docs.splice(i, 1);
   const ni = navNodes.findIndex(n => n.nodeId === d.nodeId);
@@ -453,6 +504,7 @@ function iconFor(kind, name){
   if (ext === "txt") return "TXT";
   if (ext === "docx") return "📝";
   if (ext === "pptx") return "📑";
+  if (ext === "hwp" || ext === "hwpx") return "한";
   return "📊";
 }
 
@@ -526,6 +578,7 @@ function refreshChrome(){
   const has = navNodes.length > 0;
   dropzone.hidden = has;
   byId("sidebar").hidden = !has;
+  byId("sbResizer").hidden = !has;
 }
 
 /* ===== 파일 로딩 ===== */
@@ -535,7 +588,7 @@ async function handleFiles(files, options={}){
     try {
       if (ext === "pdf") await loadPdf(await file.arrayBuffer(), file.name, options);
       else if (ext === "zip") await loadZip(file, options);
-      else if (["docx","xlsx","xls","csv","pptx","md","markdown","txt"].includes(ext)) await loadOffice(file, ext, options);
+      else if (["docx","xlsx","xls","csv","pptx","hwp","hwpx","md","markdown","txt"].includes(ext)) await loadOffice(file, ext, options);
       else if (IMG_EXTS.includes(ext)) await loadImage(file, options);
       else toast("지원하지 않는 형식: " + file.name, 2500);
     } catch (e){ console.error(e); }
@@ -670,6 +723,58 @@ function queueFiles(files, options={}){
   return fileQueue;
 }
 
+/* 폴더 열기(webkitdirectory) — 각 파일의 webkitRelativePath 로 폴더 트리를 만들어 그 아래에 연다 */
+function queueFolder(fileList){
+  const files = [...fileList];
+  if (!files.length) return fileQueue;
+  fileQueue = fileQueue.then(() => openFolderFiles(files)).catch((e) => { console.error(e); });
+  return fileQueue;
+}
+
+async function openFolderFiles(fileList){
+  // 열 수 있는 형식 + 숨김파일 제외
+  const openable = [...fileList].filter(f => {
+    const base = f.name || "";
+    if (!base || base.charAt(0) === ".") return false;
+    const ext = (base.split(".").pop() || "").toLowerCase();
+    return ZIP_OPENABLE.includes(ext);
+  });
+  if (!openable.length){ toast("폴더 안에 열 수 있는 파일이 없어요.", 3000); return; }
+
+  const rootName = ((openable[0].webkitRelativePath || "").split("/")[0]) || "폴더";
+  const rootGroup = makeGroup("folder", rootName, null);
+  const folders = new Map();                 // 상대경로 key → 그룹 nodeId
+  const parentFor = (relPath) => {
+    const parts = String(relPath || "").split("/").filter(Boolean);
+    parts.pop();                             // 파일명 제거
+    if (parts.length) parts.shift();         // 루트 폴더명 제거(rootGroup 이 담당)
+    let parentId = rootGroup.nodeId, key = rootName;
+    for (const part of parts){
+      key += "/" + part;
+      if (!folders.has(key)) folders.set(key, makeGroup("folder", part, parentId).nodeId);
+      parentId = folders.get(key);
+    }
+    return parentId;
+  };
+
+  showLoading("폴더 여는 중…");
+  let opened = 0;
+  for (const f of openable){
+    try {
+      updateLoading(`폴더 여는 중… (${opened + 1}/${openable.length})`);
+      const parentId = parentFor(f.webkitRelativePath || (rootName + "/" + f.name));
+      hideLoading();
+      await handleFiles([f], { parentId });
+      opened++;
+      await yieldToBrowser();
+      showLoading(`폴더 여는 중… (${opened}/${openable.length})`);
+    } catch(e){ console.error(e); }
+  }
+  hideLoading();
+  if (!opened){ closeGroup(rootGroup.nodeId); toast("폴더를 열지 못했어요.", 3000); return; }
+  toast("📁 " + opened + "개 열기", 2800);
+}
+
 function readEntryFile(entry){
   return new Promise((resolve, reject) => entry.file(resolve, reject));
 }
@@ -753,17 +858,26 @@ async function loadPdf(arrayBuffer, name, options={}){
     refreshChrome();
 
     const data = new Uint8Array(arrayBuffer.slice(0)); // pdf.js 에는 복사본 전달
-    const pdf = await pdfjsLib.getDocument({ data }).promise;
+    // disableFontFace: 임베드 폰트의 글리프를 캔버스에 직접 그린다.
+    //  → 브라우저가 서브셋 한글(CJK) 폰트의 @font-face 를 거부해 두부글자(□)로 깨지는 문제 방지(특히 file://).
+    // useSystemFonts:false: 시스템 폰트로 대체하지 않고 임베드 폰트를 그대로 사용.
+    const pdf = await pdfjsLib.getDocument({ data, disableFontFace: true, useSystemFonts: false }).promise;
+    doc.pdfjsDoc = pdf;
 
+    // 페이지 크기만 먼저 구해 placeholder(프레임+오버레이) 생성 — 레이아웃/스크롤 확정.
+    // 무거운 캔버스 렌더는 화면에 보일 때만(지연 렌더) 수행해 메모리를 아낀다.
     let rotatedWarn = false;
     for (let n = 1; n <= pdf.numPages; n++){
       updateLoading(`PDF 여는 중… (${n}/${pdf.numPages})`);
       if (doc.closed) return;
       const page = await pdf.getPage(n);
       if (page.rotate % 360 !== 0) rotatedWarn = true;
-      await renderPage(page, doc);
-      if (n % 2 === 0) await yieldToBrowser();
+      createPagePlaceholder(page, doc, n);
+      if (typeof page.cleanup === "function") page.cleanup();
+      if (n % 8 === 0) await yieldToBrowser();
     }
+    if (doc.closed) return;
+    startLazyRender(doc);          // 보이는 페이지부터 렌더, 멀어지면 캔버스 해제
 
     byId("hint").hidden = false;
     setTimeout(()=>{ byId("hint").hidden = true; }, 6000);
@@ -777,14 +891,13 @@ async function loadPdf(arrayBuffer, name, options={}){
   }
 }
 
-async function renderPage(page, doc=state){
-  if (!doc || doc.closed) return;
-  const targetViewer = doc.el;
-  const dpr = Math.min(window.devicePixelRatio || 1, MAX_RENDER_DPR);
-  const base = page.getViewport({ scale: 1 });           // 포인트 단위 크기
-  const avail = Math.min(900, targetViewer.clientWidth - 40);
-  let scale = avail / base.width;
-  scale = Math.max(0.3, Math.min(scale, 2.2));           // 화면 표시 배율
+// 페이지 placeholder 생성: 크기·오버레이·프레임만 만들고 캔버스는 지연 렌더로 미룬다.
+function createPagePlaceholder(page, doc, pageNum){
+  const dpr = Math.min(RENDER_CAP, Math.max(window.devicePixelRatio || 1, RENDER_SCALE));
+  const base = page.getViewport({ scale: 1 });
+  const avail = Math.min(FIT_MAX_W, doc.el.clientWidth - 40);
+  let scale = (avail / base.width) * FIT_SCALE;
+  scale = Math.max(0.3, Math.min(scale, 2.2));
   const vp = page.getViewport({ scale });
 
   const pageEl = document.createElement("div");
@@ -792,31 +905,104 @@ async function renderPage(page, doc=state){
   pageEl.style.width = vp.width + "px";
   pageEl.style.height = vp.height + "px";
 
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(vp.width * dpr);
-  canvas.height = Math.round(vp.height * dpr);
-  canvas.style.width = vp.width + "px";
-  canvas.style.height = vp.height + "px";
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
-
   const overlay = document.createElement("div");
   overlay.className = "overlay";
   overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) selectEl(null); });
 
-  pageEl.appendChild(canvas);
-  pageEl.appendChild(overlay);
-  targetViewer.appendChild(pageEl);
+  const frame = document.createElement("div");
+  frame.className = "page-frame";
+  frame.style.width = vp.width + "px";
+  frame.style.height = vp.height + "px";
 
-  doc.pages.push({
-    pageEl, overlay, scale,
+  pageEl.appendChild(overlay);                 // 캔버스는 보일 때 overlay 앞(아래)에 끼워넣음
+  frame.appendChild(pageEl);
+  doc.el.appendChild(frame);
+
+  const pinfo = {
+    pageEl, overlay, frame, scale, dpr, pageNum,
+    cssW: vp.width, cssH: vp.height,
     ptW: base.width, ptH: base.height,
     rotation: page.rotate % 360,
-  });
+    canvas: null, rendered: false, rendering: null,
+  };
+  doc.pages.push(pinfo);
+  if (doc.zoom && doc.zoom !== 1) applyPageZoom(pinfo, doc.zoom);
+}
 
-  const task = page.render({ canvasContext: ctx, viewport: vp });
-  await task.promise;
-  if (typeof page.cleanup === "function") page.cleanup();
+// 페이지 캔버스를 실제로 그린다(화면에 보일 때 호출).
+function renderPageCanvas(doc, p){
+  if (p.rendered || p.rendering || !doc.pdfjsDoc) return p.rendering || Promise.resolve();
+  p.rendering = (async () => {
+    try {
+      const page = await doc.pdfjsDoc.getPage(p.pageNum);
+      if (doc.closed || !p.frame.isConnected) return;
+      const vp = page.getViewport({ scale: p.scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(vp.width * p.dpr);
+      canvas.height = Math.round(vp.height * p.dpr);
+      canvas.style.width = vp.width + "px";
+      canvas.style.height = vp.height + "px";
+      const ctx = canvas.getContext("2d");
+      ctx.scale(p.dpr, p.dpr);
+      p.pageEl.insertBefore(canvas, p.pageEl.firstChild);   // 캔버스는 오버레이 뒤(아래)
+      p.canvas = canvas;
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      if (typeof page.cleanup === "function") page.cleanup();
+      p.rendered = true;
+    } catch (e){ console.error("page render", e); }
+    finally { p.rendering = null; }
+  })();
+  return p.rendering;
+}
+
+// 멀어진 페이지의 캔버스를 비워 메모리를 회수한다(오버레이·서명은 그대로 유지).
+function releasePageCanvas(p){
+  if (!p || p.rendering) return;
+  if (p.canvas){
+    p.canvas.width = 0; p.canvas.height = 0;
+    p.canvas.remove();
+    p.canvas = null;
+  }
+  p.rendered = false;
+}
+
+// 지연 렌더 옵저버: 화면 근처(±3화면) 페이지만 렌더하고, 멀어지면 해제한다.
+function startLazyRender(doc){
+  if (doc.io){ doc.io.disconnect(); doc.io = null; }
+  if (typeof IntersectionObserver === "undefined"){
+    doc.pages.forEach(p => renderPageCanvas(doc, p));      // 폴백: 전부 렌더
+    return;
+  }
+  const io = new IntersectionObserver((entries) => {
+    for (const en of entries){
+      const p = doc.pages.find(x => x.frame === en.target);
+      if (!p) continue;
+      if (en.isIntersecting) renderPageCanvas(doc, p);
+      else releasePageCanvas(p);
+    }
+  }, { root: doc.el, rootMargin: "300% 0px", threshold: 0 });
+  doc.pages.forEach(p => io.observe(p.frame));
+  doc.io = io;
+}
+
+/* ===== 화면 확대/축소 (CSS transform — 서명 좌표는 offsetLeft 기준이라 영향 없음) ===== */
+function applyPageZoom(p, z){
+  p.pageEl.style.transform = (z === 1) ? "" : "scale(" + z + ")";
+  p.frame.style.width  = (p.cssW * z) + "px";
+  p.frame.style.height = (p.cssH * z) + "px";
+}
+function setPdfZoom(z, doc){
+  doc = doc || state;
+  if (!doc || doc.kind !== "pdf") return;
+  z = Math.max(0.3, Math.min(4, Math.round(z * 100) / 100));
+  doc.zoom = z;
+  doc.pages.forEach(p => applyPageZoom(p, z));
+  updateZoomLabel();
+}
+function updateZoomLabel(){
+  const z = (state && state.kind === "pdf") ? (state.zoom || 1) : 1;
+  const lbl = byId("zoomLabel");
+  if (lbl) lbl.textContent = Math.round(z * 100) + "%";
 }
 
 /* ===== 현재 보고 있는 페이지 ===== */
@@ -874,9 +1060,10 @@ function placeBase(pageIndex, kind){
 
   // 위치: 현재 페이지 가시 영역 근처, 살짝 계단식
   const off = (state.addCount++ % 8) * 14;
+  const z = (state && state.zoom) || 1;
   const vr = viewer.getBoundingClientRect();
   const pr = p.pageEl.getBoundingClientRect();
-  let top = (vr.top + vr.height/2) - pr.top - 20 + off;
+  let top = ((vr.top + vr.height/2) - pr.top) / z - 20 + off;   // 화면좌표→레이아웃좌표(줌 보정)
   top = Math.max(8, Math.min(top, p.pageEl.clientHeight - 60));
   el.style.left = (30 + off) + "px";
   el.style.top  = top + "px";
@@ -945,13 +1132,14 @@ function makeDraggable(el){
     e.preventDefault();
     selectEl(el);
     const overlay = el.parentElement;
+    const z = (state && state.zoom) || 1;        // 줌 중이면 화면좌표를 레이아웃좌표로 환산
     const oRect = overlay.getBoundingClientRect();
     const eRect = el.getBoundingClientRect();
     const offX = e.clientX - eRect.left, offY = e.clientY - eRect.top;
     el.setPointerCapture(e.pointerId);
     const move = (ev) => {
-      let nx = ev.clientX - oRect.left - offX;
-      let ny = ev.clientY - oRect.top  - offY;
+      let nx = (ev.clientX - oRect.left - offX) / z;
+      let ny = (ev.clientY - oRect.top  - offY) / z;
       nx = Math.max(0, Math.min(nx, overlay.clientWidth  - el.offsetWidth));
       ny = Math.max(0, Math.min(ny, overlay.clientHeight - el.offsetHeight));
       el.style.left = nx + "px"; el.style.top = ny + "px";
@@ -968,11 +1156,12 @@ function makeResizable(el, grip){
     e.stopPropagation(); e.preventDefault();
     selectEl(el);
     const overlay = el.parentElement;
+    const z = (state && state.zoom) || 1;
     const startX = e.clientX, startW = el.offsetWidth;
     const aspect = el.__aspect || (el.offsetWidth / el.offsetHeight);
     grip.setPointerCapture(e.pointerId);
     const move = (ev) => {
-      let nw = startW + (ev.clientX - startX);
+      let nw = startW + (ev.clientX - startX) / z;
       nw = Math.max(30, Math.min(nw, overlay.clientWidth - el.offsetLeft));
       el.style.width = nw + "px";
       el.style.height = (nw / aspect) + "px";
@@ -1144,11 +1333,12 @@ async function loadOffice(file, ext, options={}){
     const host = doc.el; host.innerHTML = ""; host.scrollTop = 0;
     if (ext === "docx")      await renderDocx(file, host);
     else if (ext === "pptx") await renderPptx(file, host);
+    else if (ext === "hwp" || ext === "hwpx") await renderHwp(file, ext, host);
     else if (ext === "md" || ext === "markdown") await renderMarkdown(file, host);
     else if (ext === "txt")  await renderText(file, host);
     else                     await renderXlsx(file, host);   // xlsx / xls / csv
   } catch (e){
-    if (!(e && e.message === "cancelled")){ console.error(e); toast("파일을 여는 중 오류가 발생했습니다.", 3000); }
+    if (!(e && (e.message === "cancelled" || e.message === "hwpx-unsupported"))){ console.error(e); toast("파일을 여는 중 오류가 발생했습니다.", 3000); }
     closeDoc(doc.id);
   } finally {
     hideLoading();
@@ -1303,6 +1493,27 @@ function markdownToHtml(markdown){
   return html.join("\n") || "<p></p>";
 }
 
+async function renderHwp(file, ext, host){
+  if (!window.hwpjs || !window.hwpjs.Viewer){ toast("한글(HWP) 뷰어 로드 실패"); return; }
+  if (ext === "hwpx"){
+    // hwp.js 는 신형 HWPX(zip/xml)를 렌더하지 못한다 → 안내 후 조용히 종료.
+    toast("HWPX(신형 한글)는 아직 미지원이에요. 한글에서 'HWP(*.hwp)로 저장' 또는 'PDF로 저장' 후 열어주세요.", 5000);
+    throw new Error("hwpx-unsupported");
+  }
+  // hwp.js 는 기본 type:'binary' = 바이너리 "문자열" 을 기대한다(Uint8Array 를 그대로 넘기면 s2a 에서 깨짐).
+  // 그래서 바이트를 latin1 바이너리 문자열로 변환해 넘긴다.
+  const u8 = new Uint8Array(await file.arrayBuffer());
+  let bin = "";
+  const CH = 0x8000;                                   // 청크 단위(스택 오버플로 방지)
+  for (let i = 0; i < u8.length; i += CH){
+    bin += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "hwp-host";
+  host.appendChild(wrap);
+  new window.hwpjs.Viewer(wrap, bin);   // 생성자에서 동기 파싱+렌더 (type:'binary')
+}
+
 async function renderDocx(file, host){
   if (typeof docx === "undefined"){ toast("Word 뷰어 로드 실패"); return; }
   let data = file;
@@ -1315,9 +1526,16 @@ async function renderDocx(file, host){
   const wrap = document.createElement("div");
   wrap.className = "docx-host";
   host.appendChild(wrap);
-  await docx.renderAsync(data, wrap, null, {
-    className: "docx", inWrapper: true, breakPages: true, useBase64URL: true,
-  });
+  const opts = { className: "docx", inWrapper: true, breakPages: true, useBase64URL: true };
+  try {
+    await docx.renderAsync(data, wrap, null, opts);
+  } catch (e){
+    // 일부 docx 는 임베디드 폰트(embedTrueTypeFonts) 처리에서 docx-preview 가 throw 한다.
+    // 폰트/페이지브레이크 처리를 끄고 1회 재시도 → 시스템 폰트로라도 내용을 표시한다.
+    console.warn("docx 렌더 실패 → 폰트 무시로 재시도:", e);
+    wrap.innerHTML = "";
+    await docx.renderAsync(data, wrap, null, { ...opts, ignoreFonts: true, ignoreLastRenderedPageBreak: true });
+  }
 }
 
 /* CFB(OLE2) + EncryptionInfo 스트림 → 열기 암호로 암호화된 오피스 파일인지 판별 */
@@ -1355,6 +1573,31 @@ function askPassword(message){
       if (e.key === "Enter"){ e.preventDefault(); ok(); }
       else if (e.key === "Escape"){ e.preventDefault(); cancel(); }
     };
+  });
+}
+
+/* 범용 확인 모달 — Promise<boolean> 반환 (확인=true, 취소/Esc=false) */
+function confirmDialog(message, okText, cancelText){
+  return new Promise((resolve) => {
+    const modal = byId("confirmModal");
+    byId("confirmSub").textContent = message || "계속하시겠어요?";
+    byId("confirmOk").textContent = okText || "계속";
+    byId("confirmCancel").textContent = cancelText || "취소";
+    modal.hidden = false;
+    setTimeout(() => byId("confirmOk").focus(), 40);
+    const cleanup = () => {
+      modal.hidden = true;
+      byId("confirmOk").onclick = null; byId("confirmCancel").onclick = null;
+      window.removeEventListener("keydown", onKey, true);
+    };
+    const done = (v) => { cleanup(); resolve(v); };
+    byId("confirmOk").onclick = () => done(true);
+    byId("confirmCancel").onclick = () => done(false);
+    const onKey = (e) => {
+      if (e.key === "Escape"){ e.preventDefault(); done(false); }
+      else if (e.key === "Enter"){ e.preventDefault(); done(true); }
+    };
+    window.addEventListener("keydown", onKey, true);   // capture: 새로고침 가로채기보다 먼저 처리
   });
 }
 
@@ -1703,6 +1946,10 @@ function wire(){
   const fileInput = byId("fileInput");
   byId("dzInner").addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", (e) => { const fs = e.target.files; if (fs.length){ queueFiles(fs); e.target.value = ""; } });
+  // 폴더 열기(webkitdirectory) — 드래그가 막히는 file:// 에서도 폴더를 통째로 연다
+  const folderInput = byId("folderInput");
+  folderInput.addEventListener("change", (e) => { const fs = e.target.files; if (fs.length){ queueFolder(fs); e.target.value = ""; } });
+  byId("dzFolderBtn").addEventListener("click", (e) => { e.stopPropagation(); folderInput.click(); });
   ["dragenter","dragover"].forEach(ev => dropzone.addEventListener(ev, (e) => {
     e.preventDefault(); dropzone.classList.add("drag");
   }));
@@ -1719,6 +1966,26 @@ function wire(){
     if (e.dataTransfer.files.length) queueDroppedItems(e.dataTransfer);   // 드롭존/콘텐츠 어디에 떨궈도 새 탭으로 추가
   });
 
+  // 열린 파일이 있으면 새로고침/닫기 시 실수로 날리는 걸 방지.
+  // (파일은 메모리에만 있어 새로고침하면 목록이 사라짐)
+  let suppressUnloadWarn = false;
+  // 키보드 새로고침(F5 / Ctrl·⌘+R)은 가로채서 커스텀 모달을 띄운다.
+  window.addEventListener("keydown", (e) => {
+    const isReload = e.key === "F5" || ((e.ctrlKey || e.metaKey) && (e.key === "r" || e.key === "R"));
+    if (!isReload) return;
+    if (docs.length === 0) return;                 // 파일 없으면 그냥 새로고침
+    if (!byId("confirmModal").hidden) return;       // 확인창이 이미 떠 있으면 무시
+    e.preventDefault();
+    confirmDialog("열려 있는 파일 목록이 모두 사라집니다. 새로고침할까요?", "새로고침", "취소").then(ok => {
+      if (ok){ suppressUnloadWarn = true; location.reload(); }
+    });
+  });
+  // 탭 닫기·새로고침 버튼·Ctrl+W 등 가로챌 수 없는 경우엔 브라우저 기본 확인창으로 폴백.
+  window.addEventListener("beforeunload", (e) => {
+    if (suppressUnloadWarn) return;
+    if (docs.length > 0){ e.preventDefault(); e.returnValue = ""; }
+  });
+
   // 툴바
   byId("btnSign").onclick = openSig;
   byId("btnText").onclick = () => addTextElement("text", { fontSize: 18 });
@@ -1730,7 +1997,44 @@ function wire(){
   byId("btnCheck").onclick = () => addTextElement("check", { fontSize: 30, color: "#16a34a", bold: true, text: "✓" });
   byId("btnDownload").onclick = exportPdf;
   byId("btnPrint").onclick = () => window.print();
+  // 화면 확대/축소 (PDF)
+  byId("zoomIn").onclick  = () => setPdfZoom(((state && state.zoom) || 1) * 1.25);
+  byId("zoomOut").onclick = () => setPdfZoom(((state && state.zoom) || 1) / 1.25);
+  byId("zoomLabel").onclick = () => setPdfZoom(1);
+  window.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (!state || state.kind !== "pdf") return;
+    if (e.key === "=" || e.key === "+"){ e.preventDefault(); setPdfZoom(((state.zoom) || 1) * 1.25); }
+    else if (e.key === "-"){ e.preventDefault(); setPdfZoom(((state.zoom) || 1) / 1.25); }
+    else if (e.key === "0"){ e.preventDefault(); setPdfZoom(1); }
+  });
   byId("sbAdd").onclick = () => byId("fileInput").click();
+  byId("sbAddFolder").onclick = () => byId("folderInput").click();
+
+  // 사이드바 너비 드래그 조절
+  (function(){
+    const resizer = byId("sbResizer"), sidebar = byId("sidebar");
+    try { const saved = localStorage.getItem("sbWidth"); if (saved) sidebar.style.flexBasis = saved; } catch(e){}
+    resizer.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      resizer.setPointerCapture(e.pointerId);
+      resizer.classList.add("dragging");
+      const startX = e.clientX, startW = sidebar.getBoundingClientRect().width;
+      const move = (ev) => {
+        let w = startW + (ev.clientX - startX);
+        w = Math.max(150, Math.min(w, 600));         // 최소 150 ~ 최대 600px
+        sidebar.style.flexBasis = w + "px";
+      };
+      const up = () => {
+        resizer.classList.remove("dragging");
+        resizer.removeEventListener("pointermove", move);
+        resizer.removeEventListener("pointerup", up);
+        try { localStorage.setItem("sbWidth", sidebar.style.flexBasis); } catch(e){}
+      };
+      resizer.addEventListener("pointermove", move);
+      resizer.addEventListener("pointerup", up);
+    });
+  })();
 
   // 테마(다크모드) 토글
   (function(){

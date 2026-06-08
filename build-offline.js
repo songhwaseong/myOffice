@@ -17,6 +17,7 @@ let html = read("pdf-signer.html");
 // [CDN URL, vendor 파일] — HTML 에 등장하는 순서와 무관하게 매칭
 const scripts = [
   ["https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js", "jquery.min.js"],
+  ["https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js", "jszip3.min.js"],
   ["https://cdnjs.cloudflare.com/ajax/libs/jszip/2.6.1/jszip.min.js", "jszip.min.js"],
   ["https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.min.js", "jszip-utils.min.js"],
   ["https://cdn.jsdelivr.net/gh/meshesha/PPTXjs@master/js/divs2slides.min.js", "divs2slides.min.js"],
@@ -25,6 +26,7 @@ const scripts = [
   ["https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js", "xlsx.full.min.js"],
   ["https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js", "crypto-js.min.js"],
   ["vendor/office-decrypt.js", "office-decrypt.js"],
+  ["vendor/hwp.global.js", "hwp.global.js"],
   ["https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js", "pdf.min.js"],   // + worker
   ["https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js", "pdf-lib.min.js"],
   ["https://cdn.jsdelivr.net/npm/@zip.js/zip.js/dist/zip-full.min.js", "zip-full.min.js"],
