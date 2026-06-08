@@ -18,7 +18,7 @@ if errorlevel 1 (
 )
 
 echo [2/3] Building exe...
-"%CSC%" /nologo /target:exe /out:"..\pdf-signer.exe" /resource:"app.html,app.html" "launcher.cs"
+"%CSC%" /nologo /target:exe /out:"..\pdf-signer.exe" /resource:app.html,app.html "launcher.cs"
 if errorlevel 1 (
   echo ^>^> Build failed.
   exit /b 1

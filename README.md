@@ -12,8 +12,9 @@ PDF에 **서명·텍스트·날짜·체크**를 올려 저장하고, **Word·Exc
 | **오프라인 HTML** | `pdf-signer-offline.html` | 더블클릭 → 브라우저에서 바로 열림. 라이브러리 내장이라 **인터넷 불필요.** |
 | **온라인 HTML** | `pdf-signer.html` | 가장 가벼운 원본. 라이브러리를 CDN에서 받으므로 **첫 실행 시 인터넷 필요.** |
 
-> 셋 다 기능 동일. 배포·공유용이면 `pdf-signer.exe` 또는 `pdf-signer-offline.html` 하나만 주면 됩니다.
-> **PowerPoint는 `pdf-signer.exe`에서 가장 안정적으로 표시됩니다.**
+> 셋 다 기능 동일. **배포·공유용이면 `pdf-signer-offline.html` 파일 하나만** 주면 됩니다 — 설치·인터넷·exe 전부 불필요.
+> exe는 더블클릭 시 브라우저를 자동으로 띄워줄 뿐 기능은 같고, 오히려 서명되지 않아 **Windows SmartScreen 경고**가 뜰 수 있습니다(실행 시 "추가 정보 → 실행"). 그래서 **공유는 `pdf-signer-offline.html`을 권장**합니다.
+> PDF·Office·이미지 미리보기, 영역 캡처, 클립보드 복사까지 **`pdf-signer-offline.html`(file://)에서 모두 동작**합니다.
 
 ## 지원 형식
 
@@ -45,8 +46,9 @@ PDF에 **서명·텍스트·날짜·체크**를 올려 저장하고, **Word·Exc
 소스(`pdf-signer.html`)를 수정한 뒤:
 
 ```bat
-node build-offline.js     :: 1) 오프라인 HTML 재생성 (Node 필요)
-cd desktop & build.bat     :: 2) exe 재생성 (Go 필요)
+node build-offline.js          :: 1) 오프라인 HTML 재생성 (Node 필요)
+cd desktop & build-dotnet.bat  :: 2) exe 재생성 (.NET Framework C# 컴파일러 — Windows 기본 내장)
+:: 또는 Go 가 있으면:  cd desktop & build.bat
 ```
 
 - 오프라인 빌드는 `vendor/`의 모든 라이브러리를 HTML에 인라인합니다.
@@ -60,7 +62,7 @@ pdf-signer-offline.html   ← 빌드 산출물: 라이브러리 내장 단일 HT
 pdf-signer.exe            ← 빌드 산출물: 로컬 서버 앱 (오프라인 HTML 내장, ~9MB)
 build-offline.js          ← 오프라인 HTML 빌드 스크립트 (Node)
 vendor/                   ← 라이브러리 모음 (오프라인 빌드 재료)
-desktop/                  ← Go 앱 소스 (main.go, build.bat 등)
+desktop/                  ← 런처 소스 (C#: launcher.cs+build-dotnet.bat / Go: main.go+build.bat)
 ```
 
 ## 사용 기술
