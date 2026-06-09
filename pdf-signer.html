@@ -201,6 +201,8 @@
   .code-host .tk-n{color:#fca5a5}
   .code-host .tk-k{color:#93c5fd}
   .code-host .tk-t{color:#f0abfc}
+  .code-note{max-width:1080px;margin:0 auto 8px;padding:8px 12px;border-radius:8px;
+    background:#fef3c7;color:#92400e;font-size:12px;border:1px solid #fde68a}
   .md-host{max-width:920px;margin:0 auto;background:#fff;border-radius:8px;padding:34px 42px;
     box-shadow:0 4px 18px rgba(15,23,42,.12);line-height:1.7;color:#1e293b}
   .md-host h1,.md-host h2,.md-host h3,.md-host h4{line-height:1.25;margin:1.2em 0 .55em}
@@ -237,6 +239,19 @@
     main{position:static;overflow:visible}
     .office,.viewer{position:static;overflow:visible;padding:0;background:#fff}
     .page,.docx-host,.pptx-host,.xlsx-sheet,.md-host,.txt-host{box-shadow:none!important}
+    /* 코드 뷰: 스크롤 영역을 전체로 펼치고(잘림 방지) 인쇄용 밝은 테마 + 긴 줄 줄바꿈 */
+    .code-host{display:block!important;max-height:none!important;overflow:visible!important;background:#fff!important;box-shadow:none!important}
+    .code-gutter{display:none!important}
+    .code-pre{color:#1e293b!important;white-space:pre-wrap!important;word-break:break-word}
+    .code-host .tk-c{color:#6b7280!important}
+    .code-host .tk-s{color:#067d3f!important}
+    .code-host .tk-n{color:#b91c1c!important}
+    .code-host .tk-k{color:#1d4ed8!important}
+    .code-host .tk-t{color:#a21caf!important}
+    .xlsx-sheet{max-height:none!important;overflow:visible!important}
+    .pptx-host .slide{zoom:var(--pptx-print-zoom, var(--pptx-zoom,1))!important;overflow:hidden;break-inside:avoid;page-break-inside:avoid}
+    .pptx-print-page{display:flex!important;justify-content:center;align-items:flex-start;padding-top:90mm;break-inside:avoid;page-break-inside:avoid;break-after:page;page-break-after:always}
+    .pptx-print-page:last-child{break-after:auto;page-break-after:auto}
   }
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/meshesha/PPTXjs@master/css/pptxjs.css">
@@ -1667,8 +1682,16 @@ function highlightCode(src, profile){
 
 async function renderCode(file, host, ext, profile){
   const text = (await file.text()).replace(/\r\n?/g, "\n");
-  const html = highlightCode(text, profile || CODE_EXTS[ext] || "c");
+  // 대용량/초장문 파일은 구문 강조(수십만 span 생성)를 생략하고 일반 텍스트로 → 렌더·전환 부담 감소
+  const heavy = text.length > 300000 || /[^\n]{20000}/.test(text);
+  const html = highlightCode(text, heavy ? "text" : (profile || CODE_EXTS[ext] || "c"));
   const lineCount = text.split("\n").length;
+  if (heavy){
+    const note = document.createElement("div");
+    note.className = "code-note";
+    note.textContent = "⚡ 큰 파일이라 구문 강조를 생략했어요 (" + (text.length/1048576).toFixed(1) + "MB · " + lineCount.toLocaleString() + "줄)";
+    host.appendChild(note);
+  }
   const wrap = document.createElement("div"); wrap.className = "code-host";
   const gutter = document.createElement("div"); gutter.className = "code-gutter";
   let nums = ""; for (let i = 1; i <= lineCount; i++) nums += i + "\n";
@@ -2486,6 +2509,29 @@ function wire(){
   window.addEventListener("beforeunload", (e) => {
     if (suppressUnloadWarn) return;
     if (docs.length > 0){ e.preventDefault(); e.returnValue = ""; }
+  });
+
+  // 인쇄/PDF 저장 시 잘림 방지: PPTX 슬라이드를 인쇄 페이지 폭에 맞춰 "똑바로" 축소한다.
+  // (페이지 방향은 강제하지 않는다 — landscape 를 강제하면 일부 브라우저가 내용을 90° 회전시켜 저장하는 버그가 있어서.)
+  const PRINT_FIT_W = 700;                        // 세로 A4 인쇄 가능 폭(px) 근사
+  const PRINT_FIT_H = 940;                        // 세로 A4 인쇄 가능 높이(px) 근사 — 높이로도 맞춰 1슬라이드=1페이지 보장
+  window.addEventListener("beforeprint", () => {
+    const host = state && state.el ? state.el.querySelector(".pptx-host") : null;
+    if (!host) return;
+    const slide = host.querySelector(".slide");
+    const natW = slide ? (parseFloat(slide.style.width)  || slide.getBoundingClientRect().width  || 960) : 960;
+    const natH = slide ? (parseFloat(slide.style.height) || slide.getBoundingClientRect().height || 540) : 540;
+    host.style.setProperty("--pptx-print-zoom", Math.min(1, PRINT_FIT_W / natW, PRINT_FIT_H / natH));
+    host.querySelectorAll(".slide").forEach(s => {           // 각 슬라이드를 컨테이너로 감싸 한 페이지에 하나씩 + 아래로 내림
+      if (!s.parentElement || !s.parentElement.classList.contains("pptx-print-page")){
+        const w = document.createElement("div"); w.className = "pptx-print-page";
+        s.parentNode.insertBefore(w, s); w.appendChild(s);
+      }
+    });
+  });
+  window.addEventListener("afterprint", () => {
+    const host = state && state.el ? state.el.querySelector(".pptx-host") : null;
+    if (host) host.style.removeProperty("--pptx-print-zoom");
   });
 
   // 툴바
