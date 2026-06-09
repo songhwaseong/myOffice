@@ -173,7 +173,10 @@
   .office{position:absolute;inset:0;overflow:auto;background:var(--viewer);padding:24px 12px 60px;isolation:isolate}
   .docx-host{margin:0 auto}
   .hwp-host{margin:0 auto}
-  .pptx-host{margin:0 auto;max-width:1080px}
+  .pptx-host{margin:0 auto}
+  /* 슬라이드는 pptxjs 가 원본 픽셀 크기로 그린다 → 뷰어 폭에 맞춰 축소(가운데정렬은 .slide 의 margin:auto).
+     zoom 은 레이아웃까지 함께 줄어 가운데정렬·세로 높이가 정확. --pptx-zoom 은 fitPptxSlides 가 지정. */
+  .pptx-host .slide{zoom:var(--pptx-zoom,1)}
   .xlsx-tabs{display:flex;gap:6px;flex-wrap:wrap;max-width:1080px;margin:0 auto 12px}
   .xlsx-tab{font:inherit;font-size:13px;padding:7px 14px;border:1px solid var(--border);
     background:#fff;border-radius:8px 8px 0 0;cursor:pointer;color:var(--muted)}
@@ -14803,12 +14806,11 @@ function showLoading(msg){ byId("loadingMsg").textContent = msg||"처리 중…"
 function hideLoading(){ byId("loading").hidden = true; }
 function updateLoading(msg){ if (msg) byId("loadingMsg").textContent = msg; }
 function yieldToBrowser(){ return new Promise(resolve => setTimeout(resolve, 0)); }
-// PDF 렌더 슈퍼샘플링: 화면 픽셀의 최소 RENDER_SCALE 배로 그려 글자를 선명하게 한다.
-// (devicePixelRatio 가 1 이어도 2배로 렌더 → 다운스케일되며 또렷해짐). RENDER_CAP 으로 메모리 보호.
+// PDF 렌더 해상도: 화면에 "보이는 배율(줌)"에 맞춰 캔버스 픽셀을 잡아 크롬처럼 어느 배율이든 또렷하게 한다.
+// 최소 RENDER_SCALE 배 슈퍼샘플(작게 봐도 선명) + 줌이 커지면 그 배율로 재렌더(targetRenderDpr 참고).
+// RENDER_MAX_SIDE 로 캔버스 한 변(px)을 제한해 고배율 메모리를 보호한다(단 z=1 품질은 보존).
 const RENDER_SCALE = 3;
-const RENDER_CAP = 3;
-// 줌 레벨에 맞춰 페이지를 다시 렌더해 축소 시에도 선명하게(끄려면 false → 기존 CSS 스케일 동작).
-const ZOOM_RERENDER = true;
+const RENDER_MAX_SIDE = 5000;
 // PDF 기본 표시 크기 배수(맞춤 대비). 1.0 = 기본, 키우면 더 크게 열림.
 const FIT_SCALE = 1.0;
 // 페이지 최대 너비(px). 넓은 화면에서 이 값까지 커진다(너무 크면 가로 스크롤이 생기지 않게 창 너비로 제한됨).
@@ -14921,6 +14923,7 @@ function closeDoc(id, options={}){
   d.closed = true;
   if (d.io){ d.io.disconnect(); d.io = null; }                  // 지연 렌더 옵저버 해제
   if (d.pdfjsDoc && d.pdfjsDoc.destroy){ try { d.pdfjsDoc.destroy(); } catch(e){} d.pdfjsDoc = null; }
+  if (d.__fontFaces){ d.__fontFaces.forEach(ff => { try { document.fonts.delete(ff); } catch(e){} }); d.__fontFaces = null; }  // PPTX 내장 글꼴 해제
   d.el.remove();
   docs.splice(i, 1);
   const ni = navNodes.findIndex(n => n.nodeId === d.nodeId);
@@ -15033,12 +15036,46 @@ async function handleFiles(files, options={}){
       else if (ext === "zip") await loadZip(file, opts);
       else if (ext === "tar") await loadTar(file, opts);
       else if (ext === "gz" || ext === "tgz") await loadGz(file, opts);   // .gz / .tgz / .tar.gz
-      else if (["docx","xlsx","xls","csv","pptx","hwp","hwpx","md","markdown","mdx","txt","html","htm","xhtml"].includes(ext) || (ext in CODE_EXTS)) await loadOffice(file, ext, opts);
+      else if (ext === "pptx"){
+        const pdfBuf = await tryConvertPptxToPdf(file);      // 설치된 PowerPoint 로 정확 변환 시도(exe 백엔드)
+        if (pdfBuf) await loadPdf(pdfBuf, file.name.replace(/\.pptx$/i, ".pdf"), opts);
+        else await loadOffice(file, "pptx", opts);            // 백엔드 없음/변환 실패 → pptxjs 미리보기로 폴백
+      }
+      else if (["docx","xlsx","xls","csv","hwp","hwpx","md","markdown","mdx","txt","html","htm","xhtml"].includes(ext) || (ext in CODE_EXTS)) await loadOffice(file, ext, opts);
       else if (IMG_EXTS.includes(ext)) await loadImage(file, opts);
       else await loadText(file, opts);          // 알 수 없는 확장자 → 텍스트면 열고 아니면 안내
-
     } catch (e){ console.error(e); }
   }
+}
+
+/* ===== PPTX → PDF 변환 (exe 백엔드 + 설치된 PowerPoint) =====
+   pptxjs 는 도형/그룹 좌표를 못 맞춰 원본과 크게 달라진다. exe 로 실행 중이면 launcher 의
+   /convert-pptx 엔드포인트(PowerPoint COM)로 정확히 PDF 변환해 PDF 뷰어로 띄운다(서명도 가능).
+   - file:// (브라우저 단독 offline HTML)이거나 PowerPoint 미설치면 null → 기존 pptxjs 폴백. */
+let _pptxBackend = null;   // null=미확인, true/false=캐시
+async function pptxBackendAvailable(){
+  if (location.protocol !== "http:" && location.protocol !== "https:") return false;   // file:// → 백엔드 없음
+  if (_pptxBackend !== null) return _pptxBackend;
+  try {
+    const res = await fetch("/can-convert", { method: "GET" });
+    _pptxBackend = res.ok && (await res.text()).trim() === "yes";
+  } catch(e){ _pptxBackend = false; }
+  return _pptxBackend;
+}
+async function tryConvertPptxToPdf(file){
+  if (!(await pptxBackendAvailable())) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 180000);   // 최대 3분
+  try {
+    showLoading("PowerPoint으로 변환 중… (대형 파일은 잠시 걸려요)");
+    const buf = await file.arrayBuffer();
+    const res = await fetch("/convert-pptx", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: buf, signal: ctrl.signal });
+    if (!res.ok) return null;                              // 501(PowerPoint 없음)/500 등 → 폴백
+    if (((res.headers.get("Content-Type") || "").toLowerCase()).indexOf("application/pdf") < 0) return null;
+    const pdf = await res.arrayBuffer();
+    return (pdf && pdf.byteLength > 100) ? pdf : null;
+  } catch(e){ return null; }
+  finally { clearTimeout(timer); hideLoading(); }
 }
 
 /* ===== 압축(zip) 풀어서 내부 파일을 각각 열기 (zip.js — 무암호 + AES 암호 지원) ===== */
@@ -15431,7 +15468,6 @@ async function loadPdf(arrayBuffer, name, options={}){
 
 // 페이지 placeholder 생성: 크기·오버레이·프레임만 만들고 캔버스는 지연 렌더로 미룬다.
 function createPagePlaceholder(page, doc, pageNum){
-  const dpr = Math.min(RENDER_CAP, Math.max(window.devicePixelRatio || 1, RENDER_SCALE));
   const base = page.getViewport({ scale: 1 });
   const avail = Math.min(FIT_MAX_W, doc.el.clientWidth - 40);
   let scale = (avail / base.width) * FIT_SCALE;
@@ -15457,43 +15493,71 @@ function createPagePlaceholder(page, doc, pageNum){
   doc.el.appendChild(frame);
 
   const pinfo = {
-    pageEl, overlay, frame, scale, dpr, pageNum,
+    pageEl, overlay, frame, scale, pageNum,
     cssW: vp.width, cssH: vp.height,
     ptW: base.width, ptH: base.height,
     rotation: page.rotate % 360,
     canvas: null, rendered: false, rendering: null,
+    renderedDpr: 0, renderingDpr: 0, renderTask: null, gen: 0, visible: false,
   };
   doc.pages.push(pinfo);
   if (doc.zoom && doc.zoom !== 1) applyPageZoom(pinfo, doc.zoom);
 }
 
-// 페이지 캔버스를 실제로 그린다(화면에 보일 때 호출).
+// 현재 줌(보이는 배율)에 맞는 캔버스 해상도(device px 배수)를 구한다.
+//  - 최소 RENDER_SCALE 배 슈퍼샘플로 작게 봐도 또렷.
+//  - 줌을 키우면 screen*zoom 으로 따라 올라가 그 배율에서도 1:1 이상 → 크롬처럼 선명.
+//  - 캔버스 한 변이 RENDER_MAX_SIDE 를 넘지 않게 제한(메모리). 단 z=1 품질(RENDER_SCALE)은 보존.
+function targetRenderDpr(doc, p){
+  const screen = window.devicePixelRatio || 1;
+  const z = (doc.zoom || 1);
+  const want = Math.max(RENDER_SCALE, screen * z);
+  const longSide = Math.max(p.cssW, p.cssH) || 1;
+  const cap = Math.max(RENDER_SCALE, RENDER_MAX_SIDE / longSide);
+  return Math.min(want, cap);
+}
+
+// 페이지 캔버스를 실제로 그린다(화면에 보일 때 호출). 줌이 커져 더 높은 해상도가 필요하면 다시 그린다.
+// 지연 렌더(IntersectionObserver)와 줌 핸들러가 함께 호출한다. 레이아웃/오버레이 좌표는 p.scale 고정이고
+// 캔버스 CSS 크기도 항상 cssW×cssH 라서, 해상도가 바뀌어도 서명·텍스트 좌표계엔 영향이 없다.
 function renderPageCanvas(doc, p){
-  if (p.rendered || p.rendering || !doc.pdfjsDoc) return p.rendering || Promise.resolve();
+  if (!doc.pdfjsDoc) return Promise.resolve();
+  const target = targetRenderDpr(doc, p);
+  const EPS = 0.01;
+  if (p.rendered  && target <= (p.renderedDpr  || 0) + EPS) return p.rendering || Promise.resolve();
+  if (p.rendering && target <= (p.renderingDpr || 0) + EPS) return p.rendering;
+  // 더 높은 해상도가 필요 → 진행 중인 저해상도 렌더가 있으면 취소하고 다시 그린다.
+  if (p.rendering && p.renderTask){ try { p.renderTask.cancel(); } catch(e){} }
+  const gen = (p.gen = (p.gen || 0) + 1);
+  p.renderingDpr = target;
   p.rendering = (async () => {
     try {
       const page = await doc.pdfjsDoc.getPage(p.pageNum);
-      if (doc.closed || !p.frame.isConnected) return;
-      const z = ZOOM_RERENDER ? (doc.zoom || 1) : 1;
-      const vp = page.getViewport({ scale: p.scale });
-      // 줌을 반영한 유효 해상도 배율 — 축소해도 화면픽셀당 캔버스픽셀을 유지해 선명. 한 변 최대치로 캡(메모리 보호).
-      let f = p.dpr * z;
-      f = Math.max(0.5, Math.min(f, 4096 / vp.width, 4096 / vp.height));
+      if (doc.closed || p.gen !== gen || !p.frame.isConnected) return;
+      const vp = page.getViewport({ scale: p.scale });    // 레이아웃은 그대로, 해상도(target)만 키운다
       const canvas = document.createElement("canvas");
-      canvas.width = Math.round(vp.width * f);
-      canvas.height = Math.round(vp.height * f);
-      canvas.style.width = vp.width + "px";
+      canvas.width  = Math.round(vp.width  * target);
+      canvas.height = Math.round(vp.height * target);
+      canvas.style.width  = vp.width + "px";              // CSS 크기는 항상 cssW×cssH → 오버레이와 정합 유지
       canvas.style.height = vp.height + "px";
       const ctx = canvas.getContext("2d");
-      ctx.scale(f, f);
-      p.pageEl.insertBefore(canvas, p.pageEl.firstChild);   // 캔버스는 오버레이 뒤(아래)
-      p.canvas = canvas;
-      p.renderedZoom = z;
-      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      ctx.scale(target, target);
+      const task = page.render({ canvasContext: ctx, viewport: vp });
+      p.renderTask = task;
+      await task.promise;
       if (typeof page.cleanup === "function") page.cleanup();
+      if (doc.closed || p.gen !== gen || !p.frame.isConnected){ canvas.width = canvas.height = 0; return; }
+      const old = p.canvas;
+      p.pageEl.insertBefore(canvas, p.pageEl.firstChild);          // 새 캔버스를 오버레이 뒤(아래)에 먼저 끼우고
+      if (old && old !== canvas){ old.width = old.height = 0; old.remove(); }   // 옛 캔버스 교체(깜빡임 최소화)
+      p.canvas = canvas;
       p.rendered = true;
-    } catch (e){ console.error("page render", e); }
-    finally { p.rendering = null; }
+      p.renderedDpr = target;
+    } catch (e){
+      if (!(e && e.name === "RenderingCancelledException")) console.error("page render", e);
+    } finally {
+      if (p.gen === gen){ p.renderTask = null; p.rendering = null; p.renderingDpr = 0; }
+    }
   })();
   return p.rendering;
 }
@@ -15506,20 +15570,21 @@ function releasePageCanvas(p){
     p.canvas.remove();
     p.canvas = null;
   }
-  p.rendered = false;
+  p.rendered = false; p.renderedDpr = 0;
 }
 
 // 지연 렌더 옵저버: 화면 근처(±3화면) 페이지만 렌더하고, 멀어지면 해제한다.
 function startLazyRender(doc){
   if (doc.io){ doc.io.disconnect(); doc.io = null; }
   if (typeof IntersectionObserver === "undefined"){
-    doc.pages.forEach(p => renderPageCanvas(doc, p));      // 폴백: 전부 렌더
+    doc.pages.forEach(p => { p.visible = true; renderPageCanvas(doc, p); });   // 폴백: 전부 렌더
     return;
   }
   const io = new IntersectionObserver((entries) => {
     for (const en of entries){
       const p = doc.pages.find(x => x.frame === en.target);
       if (!p) continue;
+      p.visible = en.isIntersecting;                 // 줌 재렌더가 참고할 가시성 기록
       if (en.isIntersecting) renderPageCanvas(doc, p);
       else releasePageCanvas(p);
     }
@@ -15528,35 +15593,33 @@ function startLazyRender(doc){
   doc.io = io;
 }
 
-/* ===== 화면 확대/축소 (CSS transform — 서명 좌표는 offsetLeft 기준이라 영향 없음) ===== */
+/* ===== 화면 확대/축소 =====
+   줌은 즉시 CSS transform 으로 반영(빠른 피드백)하고, 잠시 뒤 "보이는 페이지"를 그 배율로 재렌더해
+   크롬처럼 어느 배율에서도 선명하게 만든다. 레이아웃/오버레이 좌표는 p.scale 고정이라
+   서명·텍스트 좌표계(offsetLeft 기준)와 export(offsetLeft/p.scale)에는 영향이 없다. */
 function applyPageZoom(p, z){
   p.pageEl.style.transform = (z === 1) ? "" : "scale(" + z + ")";
   p.frame.style.width  = (p.cssW * z) + "px";
   p.frame.style.height = (p.cssH * z) + "px";
 }
-let zoomRerenderTimer = null;
+let zoomQualityTimer = null;
+function scheduleQualityRefresh(doc){
+  clearTimeout(zoomQualityTimer);
+  zoomQualityTimer = setTimeout(() => refreshVisibleQuality(doc), 150);   // 연속 줌은 합쳐서 1회만 재렌더
+}
+// 현재 보이는 페이지를 새 배율 해상도로 다시 그린다(지연 렌더 구조 재활용; renderPageCanvas 가 필요할 때만 갱신).
+function refreshVisibleQuality(doc){
+  if (!doc || doc.closed || doc.kind !== "pdf" || !doc.pages) return;
+  doc.pages.forEach(p => { if (p.visible) renderPageCanvas(doc, p); });
+}
 function setPdfZoom(z, doc){
   doc = doc || state;
   if (!doc || doc.kind !== "pdf") return;
   z = Math.max(0.3, Math.min(4, Math.round(z * 100) / 100));
   doc.zoom = z;
-  doc.pages.forEach(p => applyPageZoom(p, z));   // 즉시 CSS 스케일로 반응(부드럽게)
+  doc.pages.forEach(p => applyPageZoom(p, z));   // 즉시 CSS 확대(빠른 피드백)
   updateZoomLabel();
-  if (ZOOM_RERENDER){                            // 멈추면 그 배율로 다시 렌더해 선명하게
-    clearTimeout(zoomRerenderTimer);
-    zoomRerenderTimer = setTimeout(() => rerenderForZoom(doc), 220);
-  }
-}
-// 현재 그려져 있는(보이는) 페이지를 새 줌 배율로 다시 렌더한다. 멀어진/안 그린 페이지는 관찰자가 처리.
-function rerenderForZoom(doc){
-  if (!doc || doc.closed || doc.kind !== "pdf") return;
-  const z = doc.zoom || 1;
-  doc.pages.forEach(p => {
-    if (!p.rendered && !p.rendering) return;                 // 아직 안 그린 건 스크롤 시 관찰자가 렌더
-    if (Math.abs((p.renderedZoom || 1) - z) < 0.01) return;  // 이미 그 배율이면 통과
-    releasePageCanvas(p);
-    renderPageCanvas(doc, p);
-  });
+  scheduleQualityRefresh(doc);                   // 잠시 뒤 보이는 페이지를 그 배율로 재렌더 → 선명
 }
 function updateZoomLabel(){
   const z = (state && state.kind === "pdf") ? (state.zoom || 1) : 1;
@@ -16355,6 +16418,7 @@ async function renderPptx(file, host){
     pptxBytes = dec;
   }
   pptxBytes = repairPptxPackageForViewer(pptxBytes);
+  loadPptxEmbeddedFonts(pptxBytes, host).catch(()=>{});   // 내장 글꼴 등록(비동기·실패해도 미리보기는 진행)
   await new Promise((resolve, reject) => {
     const div = document.createElement("div");
     div.id = "pptxHost_" + Date.now();
@@ -16399,10 +16463,104 @@ async function renderPptx(file, host){
         pptxFileUrl: url, slidesScale: "", slideMode: false, keyBoardShortCut: false,
       });
     } catch (e){ fail(e); return; }
-    waitForPptxRender(div).then(finish, fail).finally(() => {
+    waitForPptxRender(div).then(() => { try { fitPptxSlides(div); } catch(e){} finish(); }, fail).finally(() => {
       window.removeEventListener("error", onError);
     });
   });
+}
+
+// pptxjs 는 슬라이드를 원본 픽셀 크기(예: 1920×1080)로 그린다. 큰 덱은 뷰어보다 넓어 가운데정렬이
+// 깨지고(=오른쪽으로 넘침) 가로 스크롤이 생긴다. 뷰어 폭에 맞춰 zoom 으로 축소한다(원본보다 키우진 않음).
+//  - zoom 은 레이아웃까지 축소돼 .slide 의 margin:auto 가운데정렬과 세로 높이가 정확히 유지된다.
+//  - --pptx-zoom 은 모든 .slide 가 상속하므로, 늦게 추가되는 슬라이드도 자동으로 같은 배율이 적용된다.
+//  - 창·사이드바 크기 변화는 ResizeObserver 로 다시 맞춘다.
+function fitPptxSlides(host){
+  if (!host || !host.isConnected) return;
+  const slide = host.querySelector(".slide");
+  if (!slide) return;
+  const natW = parseFloat(slide.style.width) || slide.getBoundingClientRect().width || 960;
+  const avail = host.clientWidth - 6;            // 슬라이드 테두리/여백 여유
+  if (avail <= 1) return;                          // 숨김 상태 등 → 마지막 배율 유지
+  const s = Math.max(0.1, Math.min(1, avail / natW));   // 1 초과 금지(원본보다 키워 흐려지지 않게)
+  if (host.__z === s) return;                      // 변화 없으면 스킵(재계산 루프 방지)
+  host.__z = s;
+  host.style.setProperty("--pptx-zoom", s);
+  if (!host.__ro && typeof ResizeObserver !== "undefined"){
+    const ro = new ResizeObserver(() => {
+      if (!host.isConnected){ ro.disconnect(); host.__ro = null; return; }
+      fitPptxSlides(host);
+    });
+    ro.observe(host);
+    host.__ro = ro;
+  }
+}
+
+/* ===== PPTX 내장 글꼴(EOT) 적용 =====
+   pptxjs 는 내장 글꼴을 무시하고 시스템 폰트로 대체해 원본과 글자 모양이 달라진다.
+   PPTX 의 ppt/fonts/*.fntdata 는 EOT(Embedded OpenType) 래퍼이고, 실제 TTF/OTF 가 "맨 뒤
+   FontDataSize 바이트"에 그대로 들어 있다. 이를 꺼내 FontFace 로 등록하면 pptxjs 가 출력한
+   font-family(=원본 typeface 이름)와 매칭돼 원본 글꼴로 표시된다. (Chromium/WebView2 런타임) */
+function eotToSfnt(eot){
+  if (!eot || eot.length < 16) return null;
+  const dv = new DataView(eot.buffer, eot.byteOffset, eot.byteLength);
+  const fontDataSize = dv.getUint32(4, true);          // EOT: 실제 폰트 데이터 크기
+  const flags = dv.getUint32(12, true);
+  if (flags & 0x00000004) return null;                 // TTEMBED_TTCOMPRESSED(MTX 압축) → 미지원
+  if (fontDataSize <= 0 || fontDataSize > eot.length) return null;
+  const ttf = eot.subarray(eot.length - fontDataSize); // FontData 는 EOT 의 마지막 블록
+  const v = (ttf[0] << 24 | ttf[1] << 16 | ttf[2] << 8 | ttf[3]) >>> 0;
+  const ok = (v === 0x00010000 || v === 0x4F54544F || v === 0x74727565 || v === 0x74746366); // ttf/OTTO/true/ttcf
+  return ok ? ttf.slice() : null;                      // EOT 버퍼와 분리된 복사본
+}
+function resolvePptPath(base, target){
+  if (!target) return "";
+  if (target.charAt(0) === "/") return target.slice(1);      // 절대경로(/ppt/..)
+  const stack = base.split("/").filter(Boolean);
+  for (const seg of target.split("/")){
+    if (seg === "..") stack.pop();
+    else if (seg && seg !== ".") stack.push(seg);
+  }
+  return stack.join("/");
+}
+async function loadPptxEmbeddedFonts(bytes, host){
+  if (typeof JSZip === "undefined" || typeof FontFace === "undefined" || !document.fonts) return;
+  let zip;
+  try { zip = new JSZip(bytes); } catch(e){ return; }
+  const presFile = zip.file("ppt/presentation.xml");
+  const relFile  = zip.file("ppt/_rels/presentation.xml.rels");
+  if (!presFile || !relFile) return;
+  const REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+  const parse = (txt) => new DOMParser().parseFromString(String(txt || "").replace(/^\uFEFF/, ""), "application/xml");
+  const relDoc = parse(relFile.asText()), presDoc = parse(presFile.asText());
+  if (relDoc.querySelector("parsererror") || presDoc.querySelector("parsererror")) return;
+  const relMap = {};
+  relDoc.querySelectorAll("Relationship").forEach(r => { relMap[r.getAttribute("Id")] = r.getAttribute("Target"); });
+  // 굵기/기울임 슬롯 → CSS 디스크립터
+  const slots = [["regular","400","normal"], ["bold","700","normal"], ["italic","400","italic"], ["boldItalic","700","italic"]];
+  const doc = (typeof docs !== "undefined") ? docs.find(d => d.el === host) : null;
+  const faces = [];
+  for (const ef of Array.from(presDoc.getElementsByTagNameNS("*", "embeddedFont"))){
+    const fontEl = ef.getElementsByTagNameNS("*", "font")[0];
+    const family = fontEl && fontEl.getAttribute("typeface");
+    if (!family) continue;
+    for (const [slot, weight, style] of slots){
+      const slotEl = ef.getElementsByTagNameNS("*", slot)[0];
+      if (!slotEl) continue;
+      const rid = slotEl.getAttributeNS(REL_NS, "id") || slotEl.getAttribute("r:id");
+      const target = rid && relMap[rid];
+      if (!target) continue;
+      const part = zip.file(resolvePptPath("ppt/", target));
+      if (!part) continue;
+      const ttf = eotToSfnt(part.asUint8Array());
+      if (!ttf) continue;
+      try {
+        const ff = new FontFace(family, ttf, { weight, style });
+        faces.push(ff);
+        ff.load().then(loaded => { if (!doc || !doc.closed){ try { document.fonts.add(loaded); } catch(e){} } }).catch(()=>{});
+      } catch(e){ /* 개별 폰트 실패는 무시하고 나머지 진행 */ }
+    }
+  }
+  if (doc && faces.length) doc.__fontFaces = (doc.__fontFaces || []).concat(faces);  // 닫을 때 정리용
 }
 
 function normalizeArrayBuffer(bytes){
