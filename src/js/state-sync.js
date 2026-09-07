@@ -80,9 +80,7 @@
   if (!serverOk) return;   // 우리 서버가 아니면(다른 로컬 서버 등) 미러링도 하지 않는다.
 
   // 2) localStorage 변경을 서버로 디바운스 미러링.
-  var rawSet = localStorage.setItem.bind(localStorage);
-  var rawRemove = localStorage.removeItem.bind(localStorage);
-  var rawClear = localStorage.clear.bind(localStorage);
+  var storage = localStorage;
   var timer = null;
 
   function snapshot() {
@@ -125,11 +123,34 @@
   }
   window.__mnFlushAppState = flushForPageHide;
 
+  // Storage 인스턴스에 메서드를 대입하면 문자열 저장 항목이 생길 수 있다.
+  // 프로토타입을 감싸되 이 localStorage의 성공한 변경만 감지한다.
+  // 백업 복원의 쓰기 일시정지도 이 래퍼를 보존하고 복구할 수 있다.
+  var replaced = [];
   try {
-    localStorage.setItem = function (key, value) { rawSet(key, value); schedule(); };
-    localStorage.removeItem = function (key) { rawRemove(key); schedule(); };
-    localStorage.clear = function () { rawClear(); schedule(); };
-  } catch (_) {}
+    var prototype = Object.getPrototypeOf(storage);
+    ["setItem", "removeItem", "clear"].forEach(function (name) {
+      var descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+      if (!descriptor || typeof descriptor.value !== "function") {
+        throw new Error("Storage method unavailable: " + name);
+      }
+      var original = descriptor.value;
+      Object.defineProperty(prototype, name, Object.assign({}, descriptor, {
+        value: function () {
+          var result = original.apply(this, arguments);
+          if (this === storage) schedule();
+          return result;
+        }
+      }));
+      replaced.push([name, descriptor]);
+    });
+  } catch (_) {
+    // 일부 메서드만 설치된 상태를 남기지 않는다.
+    while (replaced.length) {
+      var entry = replaced.pop();
+      Object.defineProperty(prototype, entry[0], entry[1]);
+    }
+  }
 
   // 페이지를 떠나기 전 마지막 변경을 확실히 반영한다. URL 토큰 노출을 막기 위해
   // sendBeacon 대신 헤더를 붙일 수 있는 keepalive fetch를 우선 사용한다.

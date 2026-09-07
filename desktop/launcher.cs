@@ -3569,10 +3569,7 @@ class ClassDockLauncher
         {
             string dir = Path.GetDirectoryName(AppStatePath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
-            string tmp = AppStatePath + ".tmp";
-            File.WriteAllBytes(tmp, body);
-            if (File.Exists(AppStatePath)) File.Delete(AppStatePath);
-            File.Move(tmp, AppStatePath);
+            WriteFileAtomically(AppStatePath, body);
         }
     }
 
@@ -5357,13 +5354,15 @@ class ClassDockLauncher
     {
         string dir = Path.GetDirectoryName(WorkspacePath);
         Directory.CreateDirectory(dir);
-        string temp = WorkspacePath + ".tmp";
+        string temp = Path.Combine(dir, ".classdock-save-" + Guid.NewGuid().ToString("N") + ".tmp");
+        bool created = false;
         int count = 0;
         long total = 4;
         try
         {
-            using (FileStream outStream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16))
+            using (FileStream outStream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16))
             {
+                created = true;
                 WriteWorkspaceInt(outStream, 0);          // 개수는 다 쓴 뒤 되돌아와 채운다
                 byte[] buffer = new byte[1 << 20];
                 if (keepExisting && File.Exists(WorkspacePath))
@@ -5411,25 +5410,28 @@ class ClassDockLauncher
                         outStream.Write(appendBody, record.Offset, record.Length);
                     }
                 }
-                outStream.Flush();
                 outStream.Seek(0, SeekOrigin.Begin);
                 WriteWorkspaceInt(outStream, count);
+                outStream.Flush(true); // 최종 항목 개수까지 기록한 다음 교체한다.
+            }
+            if (count == 0)      // 남은 항목이 없으면 빈 묶음을 남기지 않는다(닫은 파일 정리와 같은 규칙)
+            {
+                File.Delete(WorkspacePath);
+                return 0;
+            }
+            // 교체 실패 시 원본 삭제나 직접 덮어쓰기로 우회하지 않는다.
+            if (File.Exists(WorkspacePath)) File.Replace(temp, WorkspacePath, null);
+            else File.Move(temp, WorkspacePath);
+            return count;
+        }
+        finally
+        {
+            if (created)
+            {
+                try { File.Delete(temp); }
+                catch (Exception ex) { Debug.WriteLine("workspace-temp-cleanup-failed: " + ex.Message); }
             }
         }
-        catch
-        {
-            try { if (File.Exists(temp)) File.Delete(temp); } catch { }
-            throw;
-        }
-        if (count == 0)      // 남은 항목이 없으면 빈 묶음을 남기지 않는다(닫은 파일 정리와 같은 규칙)
-        {
-            try { File.Delete(temp); } catch { }
-            try { if (File.Exists(WorkspacePath)) File.Delete(WorkspacePath); } catch { }
-            return 0;
-        }
-        if (File.Exists(WorkspacePath)) File.Delete(WorkspacePath);
-        File.Move(temp, WorkspacePath);
-        return count;
     }
 
     // 교체 저장은 브라우저가 보낸 작업공간 바이너리 자체가 최종 저장 형식과 같다.
@@ -5465,10 +5467,7 @@ class ClassDockLauncher
     {
         string dir = Path.GetDirectoryName(WorkspacePath);
         Directory.CreateDirectory(dir);
-        string temp = WorkspacePath + ".tmp";
-        File.WriteAllBytes(temp, saved);
-        if (File.Exists(WorkspacePath)) File.Delete(WorkspacePath);
-        File.Move(temp, WorkspacePath);
+        WriteFileAtomically(WorkspacePath, saved);
     }
 
     static int SaveWorkspace(byte[] body, bool replace)

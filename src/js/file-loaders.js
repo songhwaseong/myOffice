@@ -464,20 +464,55 @@ async function gunzipBytes(bytes){
 function parseTar(buf){
   const td = new TextDecoder();
   const str = (s, len) => td.decode(buf.subarray(s, s + len)).replace(/\0[\s\S]*$/, "").trim();
-  const octal = (s, len) => parseInt((td.decode(buf.subarray(s, s + len)).replace(/[\0 ]+$/, "").trim() || "0"), 8) || 0;
+  const octal = (s, len) => {
+    const text = td.decode(buf.subarray(s, s + len)).replace(/^[\0 ]+|[\0 ]+$/g, "");
+    // parseInt만 쓰면 음수와 "123x" 같은 부분 숫자도 통과한다.
+    if (!/^[0-7]*$/.test(text)) throw new Error("손상된 TAR: 올바르지 않은 숫자 필드");
+    return text ? parseInt(text, 8) : 0;
+  };
+  const fileSize = (s) => {
+    let size = 0;
+    if (buf[s] === 0x80){
+      // GNU의 양수 base-256 크기. 음수와 안전 정수 범위 밖의 값은 허용하지 않는다.
+      for (let i = 1; i < 12; i++){
+        size = size * 256 + buf[s + i];
+        if (!Number.isSafeInteger(size)) throw new Error("손상된 TAR: 파일 크기 범위 초과");
+      }
+    } else {
+      size = octal(s, 12);
+    }
+    return size;
+  };
   const files = []; let off = 0, longName = null;
-  while (off + 512 <= buf.length){
-    let empty = true;
-    for (let i = 0; i < 512; i++){ if (buf[off + i] !== 0){ empty = false; break; } }
+  while (off < buf.length){
+    if (buf.length - off < 512) throw new Error("손상된 TAR: 잘린 헤더");
+    let empty = true, unsignedSum = 0, signedSum = 0;
+    for (let i = 0; i < 512; i++){
+      const raw = buf[off + i];
+      if (raw !== 0) empty = false;
+      // 체크섬 필드 자체는 공백으로 계산한다. 구형 signed 체크섬도 호환한다.
+      const byte = i >= 148 && i < 156 ? 32 : raw;
+      unsignedSum += byte;
+      signedSum += byte < 128 ? byte : byte - 256;
+    }
     if (empty) break;                                   // 끝(빈 블록)
+    const checksum = octal(off + 148, 8);
+    if (checksum !== unsignedSum && checksum !== signedSum)
+      throw new Error("손상된 TAR: 헤더 체크섬 불일치");
+
     let name = str(off, 100);
-    const size = octal(off + 124, 12);
+    const size = fileSize(off + 124);
     const type = String.fromCharCode(buf[off + 156] || 0);
     const prefix = str(off + 345, 155);                 // ustar 긴 경로
     if (prefix) name = prefix + "/" + name;
-    off += 512;
-    const data = buf.subarray(off, off + size);
-    off += Math.ceil(size / 512) * 512;
+    const dataStart = off + 512;
+    const paddedSize = Math.ceil(size / 512) * 512;
+    // subarray는 범위 초과를 조용히 잘라 내므로 본문·패딩을 먼저 검증한다.
+    // 생략할 메타 항목도 같은 검증을 거쳐야 다음 헤더 위치를 신뢰할 수 있다.
+    if (size > buf.length - dataStart || paddedSize > buf.length - dataStart)
+      throw new Error("손상된 TAR: 잘린 파일 데이터 또는 패딩");
+    const data = buf.subarray(dataStart, dataStart + size);
+    off = dataStart + paddedSize;
     if (type === "L"){ longName = td.decode(data).replace(/\0[\s\S]*$/, ""); continue; }  // GNU 긴 이름
     if (longName){ name = longName; longName = null; }
     if (type === "0" || type === "\0" || type === "" || type === "7") files.push({ name, data });

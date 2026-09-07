@@ -212,8 +212,7 @@ test("런처의 작업공간 병합·삭제는 파일 전체를 메모리에 올
   assert.match(blockOf("static byte[] LoadWorkspace()"), /ReadAllBytes\(WorkspacePath\)/);
   assert.doesNotMatch(blockOf("static int SaveWorkspace(byte[] body, bool replace)"), /ReadAllBytes/);
   assert.doesNotMatch(blockOf("static int RemoveWorkspaceFiles(byte[] body)"), /ReadAllBytes/);
-  // 실패하면 임시 파일을 지우고 기존 기록은 건드리지 않는다.
-  assert.match(launcherSource, /catch\s*\{\s*try \{ if \(File\.Exists\(temp\)\) File\.Delete\(temp\); \} catch \{ \}\s*throw;/);
+  // 교체 실패 시 원본 보존·임시 파일 정리는 workspace-atomic-save.test.js에서 실제 파일로 검증한다.
 });
 
 test("위치만 기억한 폴더는 탭 복원 전에 디스크로 채운다", () => {
